@@ -215,18 +215,17 @@ async function handleSubmit(e) {
 }
 
 function resetDailyLogFields() {
-    // إعادة تعيين نوع اليومية
-    logType.value = '';
-    handleTypeChange(); // يخفي السعر المخصص ويحدث الإجمالي
+    // إعادة تعيين نوع اليومية للاختيار الأول
+    logType.selectedIndex = 0;
     
-    // إعادة تعيين الكمية والملاحظات
-    logQuantity.value = '';
-    logNotes.value = '';
-    
-    // إعادة تعيين حقول السعر والإجمالي
+    // إخفاء كل أقسام السعر والإجمالي (جاهز لإضافة يومية جديدة)
     priceDisplaySection.classList.add('hidden');
     customPriceSection.classList.add('hidden');
     totalCostDisplay.classList.add('hidden');
+    
+    // تصفير الكمية والملاحظات والقيم المخفية
+    logQuantity.value = '';
+    logNotes.value = '';
     logUnitPrice.value = '0';
     logTotalCost.value = '0';
     logCustomPrice.value = '';
