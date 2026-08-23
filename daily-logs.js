@@ -29,6 +29,7 @@ logDate.value = todayStr();
 
 let currentUsername = null;
 let projects = [];
+let projectPhases = {}; // مراحل كل مشروع من الشيت
 let isAdmin = false;
 let assignedProjects = []; // المشاريع المخصصة للمشرف الحالي (فاضية = بيشوف الكل)
 let dailyLogPrices = {}; // سيخزن أسعار أنواع اليوميات من الشيت
@@ -58,6 +59,7 @@ async function loadSetupData() {
     try {
         const data = await getSetupData();
         projects = data.projects || [];
+        projectPhases = data.projectPhases || {};
 
         // تحميل أسعار اليوميات من الشيت
         dailyLogPrices = data.dailyLogPrices || {};
@@ -71,18 +73,32 @@ async function loadSetupData() {
         logProject.innerHTML = '<option value="" disabled selected>اختر المشروع</option>' +
             visibleProjects.map(p => `<option value="${p}">${p}</option>`).join('');
 
-        // تعبئة المراحل
-        const phases = ["فوم", "رولات", "أسمنتي", "دورات مياه"];
-        logPhase.innerHTML = '<option value="" disabled selected>اختر المرحلة</option>' +
-            phases.map(p => `<option value="${p}">${p}</option>`).join('');
+        // تعبئة المراحل (فاضية في الأول، هتتعبأ لما يختار مشروع)
+        logPhase.innerHTML = '<option value="" disabled selected>اختر المشروع أولاً</option>';
 
         // تعبئة أنواع اليوميات
         logType.innerHTML = '<option value="" disabled selected>اختر نوع اليومية</option>' +
             DAILY_LOG_TYPES.map(t => `<option value="${t.id}" data-price="${dailyLogPrices[t.id] || t.defaultPrice}" data-custom="${t.allowCustomPrice}">${t.name}</option>`).join('');
 
+        // لما يختار مشروع، حدث المراحل
+        logProject.removeEventListener('change', updatePhasesForProject);
+        logProject.addEventListener('change', updatePhasesForProject);
+
     } catch (err) {
         console.error(err);
         showMessage('فشل تحميل البيانات: ' + err.message);
+    }
+}
+
+function updatePhasesForProject() {
+    const selectedProject = logProject.value;
+    const phases = projectPhases[selectedProject] || [];
+    
+    if (phases.length > 0) {
+        logPhase.innerHTML = '<option value="" disabled selected>اختر المرحلة</option>' +
+            phases.map(p => `<option value="${p}">${p}</option>`).join('');
+    } else {
+        logPhase.innerHTML = '<option value="" disabled selected>لا توجد مراحل لهذا المشروع</option>';
     }
 }
 
@@ -183,15 +199,38 @@ async function handleSubmit(e) {
         });
 
         showMessage('✅ تم تسجيل اليومية بنجاح');
-        document.getElementById('dailyLogForm').reset();
-        logDate.value = todayStr();
-        priceDisplaySection.classList.add('hidden');
-        customPriceSection.classList.add('hidden');
-        totalCostDisplay.classList.add('hidden');
-        logUnitPrice.value = '0';
-        logTotalCost.value = '0';
-
+        
+        // إعادة تعيين حقول اليومية فقط (مع الاحتفاظ بالمشروع والمرحلة)
+        resetDailyLogFields();
+        
         setTimeout(() => hideMessage(), 1200);
+        await loadRecentLogs();
+    } catch (err) {
+        console.error(err);
+        showMessage('❌ فشل الحفظ: ' + err.message);
+    } finally {
+        submitBtn.disabled = false;
+        submitBtn.textContent = 'تسجيل اليومية';
+    }
+}
+
+function resetDailyLogFields() {
+    // إعادة تعيين نوع اليومية
+    logType.value = '';
+    handleTypeChange(); // يخفي السعر المخصص ويحدث الإجمالي
+    
+    // إعادة تعيين الكمية والملاحظات
+    logQuantity.value = '';
+    logNotes.value = '';
+    
+    // إعادة تعيين حقول السعر والإجمالي
+    priceDisplaySection.classList.add('hidden');
+    customPriceSection.classList.add('hidden');
+    totalCostDisplay.classList.add('hidden');
+    logUnitPrice.value = '0';
+    logTotalCost.value = '0';
+    logCustomPrice.value = '';
+}
         await loadRecentLogs();
     } catch (err) {
         console.error(err);
