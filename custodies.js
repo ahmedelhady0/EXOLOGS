@@ -3,7 +3,7 @@
 // ═══════════════════════════════════════════════════════════
 import { auth, showMessage, hideMessage, todayStr, formatDate, formatCurrency } from './firebase-config.js';
 import { onAuthStateChanged } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
-import { getUserRole, getSetupData, getUsers, getAdvanceMovements, logAdvanceExpense, depositAdvance } from './sheets-service.js';
+import { getUserRole, getSetupData, getUsers, getAdvanceMovements, logAdvanceExpense, depositAdvance, updateUserProjects } from './sheets-service.js';
 
 const adminSection = document.getElementById('adminSection');
 const summarySection = document.getElementById('summarySection');
@@ -17,14 +17,18 @@ const logTotals = document.getElementById('logTotals');
 const headerSub = document.getElementById('headerSub');
 const remainingCard = document.getElementById('remainingCard');
 const closeMessageBtn = document.getElementById('closeMessageBtn');
+const projectAssignBox = document.getElementById('projectAssignBox');
+const saveProjectsBtn = document.getElementById('saveProjectsBtn');
 
 closeMessageBtn?.addEventListener('click', hideMessage);
 
 let currentEmail = null;
 let currentUsername = null;
 let isAdmin = false;
+let assignedProjects = []; // مشاريع المشرف الحالي (فاضية = بيشوف الكل)
 let projects = [];
 let allMovements = [];
+let allUsers = [];
 
 document.getElementById('expenseDate').value = todayStr();
 
@@ -36,6 +40,7 @@ onAuthStateChanged(auth, async (user) => {
     try {
         const info = await getUserRole(user.email);
         isAdmin = info.role === 'admin';
+        assignedProjects = info.projects || [];
     } catch (err) {
         console.error(err);
     }
@@ -43,7 +48,11 @@ onAuthStateChanged(auth, async (user) => {
     if (isAdmin) {
         adminSection.classList.remove('hidden');
         await loadSupervisors();
-        supervisorSelect.addEventListener('change', loadMovements);
+        supervisorSelect.addEventListener('change', () => {
+            loadMovements();
+            renderProjectAssignBox();
+        });
+        saveProjectsBtn?.addEventListener('click', handleSaveProjects);
     } else {
         adminSection.classList.add('hidden');
         await loadMovements();
@@ -60,8 +69,8 @@ onAuthStateChanged(auth, async (user) => {
 
 async function loadSupervisors() {
     try {
-        const users = await getUsers();
-        const supervisors = users.filter(u => u.role !== 'admin' && String(u.status || '').trim() !== 'غير نشط');
+        allUsers = await getUsers();
+        const supervisors = allUsers.filter(u => u.role !== 'admin' && String(u.status || '').trim() !== 'غير نشط');
         supervisorSelect.innerHTML = '<option value="">— اختر المشرف —</option>' +
             supervisors.map(u => `<option value="${u.username}">${u.username}</option>`).join('');
     } catch (err) {
@@ -70,12 +79,68 @@ async function loadSupervisors() {
     }
 }
 
+// ── تعيين المشاريع لكل مشرف (للأدمن فقط) ───────────────────
+function renderProjectAssignBox() {
+    if (!projectAssignBox) return;
+    const username = supervisorSelect.value;
+    if (!username) {
+        projectAssignBox.innerHTML = '<div class="text-sm text-gray-400 text-center py-3">اختر مشرف أولاً</div>';
+        saveProjectsBtn?.classList.add('hidden');
+        return;
+    }
+    if (projects.length === 0) {
+        projectAssignBox.innerHTML = '<div class="text-sm text-gray-400 text-center py-3">لا توجد مشاريع مضافة بعد</div>';
+        saveProjectsBtn?.classList.add('hidden');
+        return;
+    }
+
+    const user = allUsers.find(u => u.username === username);
+    const assigned = new Set(user?.projects || []);
+
+    projectAssignBox.innerHTML = `
+        <div class="grid grid-cols-2 sm:grid-cols-3 gap-2">
+            ${projects.map(p => `
+                <label class="flex items-center gap-2 text-sm bg-white border rounded-lg px-3 py-2 cursor-pointer" style="border-color:rgba(30,60,114,0.15);">
+                    <input type="checkbox" class="project-assign-checkbox" value="${p}" ${assigned.has(p) ? 'checked' : ''}>
+                    <span>${p}</span>
+                </label>
+            `).join('')}
+        </div>
+        <p class="text-xs text-gray-400 mt-2">${assigned.size === 0 ? '⚠️ مفيش تقييد حاليًا — المشرف ده بيشوف كل المشاريع' : ''}</p>
+    `;
+    saveProjectsBtn?.classList.remove('hidden');
+}
+
+async function handleSaveProjects() {
+    const username = supervisorSelect.value;
+    if (!username) return;
+    const checked = Array.from(document.querySelectorAll('.project-assign-checkbox:checked')).map(c => c.value);
+    try {
+        saveProjectsBtn.disabled = true;
+        await updateUserProjects(username, checked, currentEmail);
+        showMessage('✅ تم حفظ مشاريع المشرف');
+        setTimeout(() => hideMessage(), 1200);
+        await loadSupervisors();
+        renderProjectAssignBox();
+    } catch (err) {
+        showMessage('❌ فشل الحفظ: ' + err.message);
+    } finally {
+        saveProjectsBtn.disabled = false;
+    }
+}
+
 async function loadProjects() {
     try {
         const data = await getSetupData();
-        projects = data.projects || [];
+        projects = data.projects || []; // القائمة الكاملة — الأدمن محتاجها كاملة لتعيين المشاريع للمشرفين
+
+        // لو المشرف معاه مشاريع مخصصة، دروب داونز الصرف والفلترة بتاعته يبقوا مقصورين عليها بس
+        const visibleProjects = (!isAdmin && assignedProjects.length > 0)
+            ? projects.filter(p => assignedProjects.includes(p))
+            : projects;
+
         const options = '<option value="">بدون مشروع</option>' +
-            projects.map(p => `<option value="${p}">${p}</option>`).join('');
+            visibleProjects.map(p => `<option value="${p}">${p}</option>`).join('');
         expenseProject.innerHTML = options;
         filterProject.innerHTML = '<option value="">الكل</option>' + options;
     } catch (err) {

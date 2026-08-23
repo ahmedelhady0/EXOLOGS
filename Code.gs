@@ -30,6 +30,55 @@ const DEFAULT_DAILY_LOG_TYPES = [
 ];
 
 // ── دوال مساعدة عامة ─────────────────────────────
+function ensureColumn_(sheet, headerName) {
+  const headerIdx = getHeaderRowIndex(sheet);
+  const lastCol = sheet.getLastColumn();
+  const headers = sheet.getRange(headerIdx + 1, 1, 1, lastCol).getValues()[0].map(normalizeHeader);
+  if (headers.indexOf(headerName) === -1) {
+    sheet.getRange(headerIdx + 1, lastCol + 1).setValue(headerName);
+  }
+}
+
+function parseProjectsField_(raw) {
+  return String(raw || '')
+    .split(',')
+    .map(s => s.trim())
+    .filter(Boolean);
+}
+
+function getUserByUsername_(username) {
+  const users = sheetToObjects(getOrCreateUsersSheet());
+  return users.find(u => String(u['username'] || '').trim().toLowerCase() === String(username || '').trim().toLowerCase());
+}
+
+// امتناع تنفيذ إجراء لو المشرف مش مسموح له بالمشروع ده (لو معاه تقييد أصلاً)
+function assertProjectAllowed_(username, project) {
+  if (!project) return; // بدون مشروع (زي بند صرف عام) مسموح دايمًا
+  if (String(username || '').trim().toLowerCase() === 'admin') return;
+  const user = getUserByUsername_(username);
+  if (!user) return; // تحوط: لو مش لاقيينه بالاسم سيبها تعدي بدل ما توقف العمل
+  if (String(user['role'] || '').toLowerCase() === 'admin') return;
+  const assigned = parseProjectsField_(user['المشاريع المخصصة']);
+  if (assigned.length === 0) return; // لسه الأدمن ما حددش مشاريع لهذا المشرف = مفيش تقييد
+  if (assigned.indexOf(project) === -1) {
+    throw new Error('غير مصرح لك بالتسجيل على هذا المشروع');
+  }
+}
+
+// كل الإجراءات الحساسة (إضافة مشروع، تعديل سعر، إيداع عهدة، تعيين مشاريع) لازم تتأكد إن الطالب أدمن فعلاً
+function isAdminEmail_(email) {
+  const username = email ? String(email).split('@')[0].toLowerCase() : '';
+  if (username === 'admin') return true;
+  const user = getUserByUsername_(username);
+  return !!user && String(user['role'] || '').toLowerCase() === 'admin';
+}
+
+function requireAdmin_(email) {
+  if (!isAdminEmail_(email)) {
+    throw new Error('غير مصرح: هذا الإجراء للمدير فقط');
+  }
+}
+
 function getSheet(name) {
   const ss = SpreadsheetApp.getActiveSpreadsheet();
   const sheet = ss.getSheetByName(name);
@@ -80,7 +129,9 @@ function getOrCreateUsersSheet() {
   let sheet = ss.getSheetByName(SHEET_NAMES.users);
   if (!sheet) {
     sheet = ss.insertSheet(SHEET_NAMES.users);
-    sheet.appendRow(['uid', 'username', 'email', 'role', 'تاريخ الإنشاء', 'الحالة']);
+    sheet.appendRow(['uid', 'username', 'email', 'role', 'تاريخ الإنشاء', 'الحالة', 'المشاريع المخصصة']);
+  } else {
+    ensureColumn_(sheet, 'المشاريع المخصصة'); // ترقية تلقائية لو الشيت اتعمل قبل إضافة الميزة دي
   }
   return sheet;
 }
@@ -179,6 +230,7 @@ function doPost(e) {
     if (action === 'registerUser') return handleRegisterUser(body);
     if (action === 'addProject') return handleAddProject(body);
     if (action === 'addDailyLogPrice') return handleAddDailyLogPrice(body);
+    if (action === 'updateUserProjects') return handleUpdateUserProjects(body);
 
     return jsonResponse({ ok: false, error: 'Unknown action: ' + action });
   } catch (err) {
@@ -199,20 +251,16 @@ function handleGetSetupData(e) {
   const cached = cache.get(cacheKey);
   if (cached) return jsonResponse(JSON.parse(cached));
 
-  let projects = [], projectDates = {}, projectPhases = {}, materials = [], suppliers = [], dailyLogPrices = {};
+  let projects = [], projectDates = {}, materials = [], suppliers = [], dailyLogPrices = {};
 
   try {
     const projData = sheetToObjects(getOrCreateProjectsSheet());
     const newestDate = {};
     projData.forEach(p => {
       const name = String(p['اسم المشروع'] || '').trim();
-      const phase = String(p['المرحلة'] || '').trim();
-      const status = String(p['الحالة'] || '').trim();
-      if (!name || !status.includes('شغال')) return;
+      if (!name || !String(p['الحالة'] || '').trim().includes('شغال')) return;
       const d = p['تاريخ الإضافة'] ? new Date(p['تاريخ الإضافة']) : null;
       if (d && (!newestDate[name] || d > newestDate[name])) newestDate[name] = d;
-      if (phase && !projectPhases[name]) projectPhases[name] = [];
-      if (phase && !projectPhases[name].includes(phase)) projectPhases[name].push(phase);
     });
     projects = Object.keys(newestDate);
     Object.entries(newestDate).forEach(([k, v]) => { projectDates[k] = v.getTime(); });
@@ -243,7 +291,7 @@ function handleGetSetupData(e) {
     });
   } catch (err) { console.log('DailyLogPrices Error:', err.message); }
 
-  const result = { projects, projectDates, projectPhases, materials, suppliers, dailyLogPrices };
+  const result = { projects, projectDates, materials, suppliers, dailyLogPrices };
   cache.put(cacheKey, JSON.stringify(result), 30);
   return jsonResponse(result);
 }
@@ -252,7 +300,7 @@ function handleGetUserRole(e) {
   const email = e.parameter.email;
   const username = email ? email.split('@')[0].toLowerCase() : '';
 
-  if (username === 'admin') return jsonResponse({ role: 'admin', username, active: true });
+  if (username === 'admin') return jsonResponse({ role: 'admin', username, active: true, projects: [] });
 
   try {
     const users = sheetToObjects(getOrCreateUsersSheet());
@@ -267,12 +315,16 @@ function handleGetUserRole(e) {
       return jsonResponse({ role: 'blocked', username, active: false, reason: 'inactive' });
     }
 
-    return jsonResponse({ role: found['role'] || 'supervisor', username, active: true });
+    const role = found['role'] || 'supervisor';
+    // مصفوفة فاضية = المشرف لسه مالوش تقييد، فبيشوف كل المشاريع
+    const projects = role === 'admin' ? [] : parseProjectsField_(found['المشاريع المخصصة']);
+
+    return jsonResponse({ role, username, active: true, projects });
   } catch (err) {
     console.log('getUserRole error:', err.message);
   }
 
-  return jsonResponse({ role: 'supervisor', username, active: true });
+  return jsonResponse({ role: 'supervisor', username, active: true, projects: [] });
 }
 
 function handleGetUsers() {
@@ -283,7 +335,8 @@ function handleGetUsers() {
       username: u['username'],
       email: u['email'],
       role: u['role'] || 'supervisor',
-      status: u['الحالة'] || 'نشط'
+      status: u['الحالة'] || 'نشط',
+      projects: parseProjectsField_(u['المشاريع المخصصة'])
     }))
   });
 }
@@ -331,6 +384,7 @@ function handleGetAdvanceMovements(e) {
 
 function handleLogDailyLog(body) {
   try {
+    assertProjectAllowed_(body.supervisor, body.project);
     const id = 'DL-' + Utilities.formatDate(new Date(), Session.getScriptTimeZone(), 'yyyyMMdd-HHmmss') + '-' + Math.floor(Math.random()*1000);
     const sheet = getOrCreateDailyLogsSheet();
 
@@ -361,6 +415,7 @@ function handleLogAdvanceExpense(params) {
     if (amount <= 0) return jsonResponse({ ok: false, error: 'المبلغ غير صحيح' });
     const supervisor = String(params.supervisor || '').trim();
     if (!supervisor) return jsonResponse({ ok: false, error: 'المشرف مطلوب' });
+    assertProjectAllowed_(supervisor, String(params.project || '').trim());
 
     const id = 'ADV-' + Utilities.formatDate(new Date(), Session.getScriptTimeZone(), 'yyyyMMdd-HHmmss') + '-' + Math.floor(Math.random() * 1000);
     getOrCreateAdvanceSheet().appendRow([
@@ -383,6 +438,7 @@ function handleLogAdvanceExpense(params) {
 
 function handleDepositAdvance(params) {
   try {
+    requireAdmin_(params.recordedBy);
     const amount = parseFloat(params.amount) || 0;
     if (amount <= 0) return jsonResponse({ ok: false, error: 'المبلغ غير صحيح' });
     const supervisor = String(params.supervisor || '').trim();
@@ -414,7 +470,36 @@ function handleRegisterUser(body) {
   return jsonResponse({ ok: true, role });
 }
 
+function handleUpdateUserProjects(body) {
+  try {
+    requireAdmin_(body && body.requesterEmail);
+    const username = String((body && body.username) || '').trim();
+    if (!username) return jsonResponse({ ok: false, error: 'اسم المشرف مطلوب' });
+
+    const projectsList = Array.isArray(body.projects) ? body.projects : [];
+    const cleanProjects = projectsList.map(p => String(p).trim()).filter(Boolean);
+
+    const sheet = getOrCreateUsersSheet();
+    const headerIdx = getHeaderRowIndex(sheet);
+    const headers = getNormalizedHeaders(sheet);
+    const usernameCol = headers.indexOf('username');
+    const projectsCol = headers.indexOf('المشاريع المخصصة');
+    const values = sheet.getDataRange().getValues();
+
+    for (let i = headerIdx + 1; i < values.length; i++) {
+      if (String(values[i][usernameCol] || '').trim().toLowerCase() === username.toLowerCase()) {
+        sheet.getRange(i + 1, projectsCol + 1).setValue(cleanProjects.join(', '));
+        return jsonResponse({ ok: true });
+      }
+    }
+    return jsonResponse({ ok: false, error: 'المشرف غير موجود' });
+  } catch (err) {
+    return jsonResponse({ ok: false, error: err.message });
+  }
+}
+
 function handleAddProject(body) {
+  requireAdmin_(body && body.requesterEmail);
   const name = String((body && body.name) || '').trim();
   if (!name) return jsonResponse({ ok: false, error: 'اسم المشروع مطلوب' });
   const sheet = getOrCreateProjectsSheet();
@@ -426,6 +511,7 @@ function handleAddProject(body) {
 }
 
 function handleAddDailyLogPrice(body) {
+  requireAdmin_(body && body.requesterEmail);
   const typeId = String((body && body.typeId) || '').trim();
   const price = parseFloat((body && body.price)) || 0;
   if (!typeId) return jsonResponse({ ok: false, error: 'نوع اليومية مطلوب' });

@@ -1,9 +1,9 @@
 // ═══════════════════════════════════════════════════════════
 // صفحة تسجيل اليوميات — نظام EXO
 // ═══════════════════════════════════════════════════════════
-import { auth, showMessage, hideMessage, todayStr, DAILY_LOG_TYPES, formatCurrency, PHASES } from './firebase-config.js';
+import { auth, showMessage, hideMessage, todayStr, DAILY_LOG_TYPES, formatCurrency } from './firebase-config.js';
 import { onAuthStateChanged } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
-import { getSetupData, logDailyLog, getDailyLogs } from './sheets-service.js';
+import { getSetupData, logDailyLog, getDailyLogs, getUserRole } from './sheets-service.js';
 
 const logDate = document.getElementById('logDate');
 const logProject = document.getElementById('logProject');
@@ -29,12 +29,21 @@ logDate.value = todayStr();
 
 let currentUsername = null;
 let projects = [];
-let projectPhases = {}; // مراحل كل مشروع من الشيت
+let isAdmin = false;
+let assignedProjects = []; // المشاريع المخصصة للمشرف الحالي (فاضية = بيشوف الكل)
 let dailyLogPrices = {}; // سيخزن أسعار أنواع اليوميات من الشيت
 
 onAuthStateChanged(auth, async (user) => {
     if (!user) { window.location.href = 'index.html'; return; }
     currentUsername = user.email.replace('@exo-system.local', '');
+
+    try {
+        const info = await getUserRole(user.email);
+        isAdmin = info.role === 'admin';
+        assignedProjects = info.projects || [];
+    } catch (err) {
+        console.error(err);
+    }
 
     await loadSetupData();
     await loadRecentLogs();
@@ -49,40 +58,31 @@ async function loadSetupData() {
     try {
         const data = await getSetupData();
         projects = data.projects || [];
-        projectPhases = data.projectPhases || {};
 
         // تحميل أسعار اليوميات من الشيت
         dailyLogPrices = data.dailyLogPrices || {};
 
+        // لو المشرف معاه مشاريع مخصصة، يشوفها بس — غير كده يشوف كل المشاريع (زي الأدمن)
+        const visibleProjects = (!isAdmin && assignedProjects.length > 0)
+            ? projects.filter(p => assignedProjects.includes(p))
+            : projects;
+
         // تعبئة المشاريع
         logProject.innerHTML = '<option value="" disabled selected>اختر المشروع</option>' +
-            projects.map(p => `<option value="${p}">${p}</option>`).join('');
+            visibleProjects.map(p => `<option value="${p}">${p}</option>`).join('');
 
-        // تعبئة المراحل (فاضية في الأول، هتتعبأ لما يختار مشروع)
-        logPhase.innerHTML = '<option value="" disabled selected>اختر المشروع أولاً</option>';
+        // تعبئة المراحل
+        const phases = ["فوم", "رولات", "أسمنتي", "دورات مياه"];
+        logPhase.innerHTML = '<option value="" disabled selected>اختر المرحلة</option>' +
+            phases.map(p => `<option value="${p}">${p}</option>`).join('');
 
         // تعبئة أنواع اليوميات
         logType.innerHTML = '<option value="" disabled selected>اختر نوع اليومية</option>' +
             DAILY_LOG_TYPES.map(t => `<option value="${t.id}" data-price="${dailyLogPrices[t.id] || t.defaultPrice}" data-custom="${t.allowCustomPrice}">${t.name}</option>`).join('');
 
-        // لما يختار مشروع، حدث المراحل
-        logProject.addEventListener('change', updatePhasesForProject);
-
     } catch (err) {
         console.error(err);
         showMessage('فشل تحميل البيانات: ' + err.message);
-    }
-}
-
-function updatePhasesForProject() {
-    const selectedProject = logProject.value;
-    const phases = projectPhases[selectedProject] || [];
-    
-    if (phases.length > 0) {
-        logPhase.innerHTML = '<option value="" disabled selected>اختر المرحلة</option>' +
-            phases.map(p => `<option value="${p}">${p}</option>`).join('');
-    } else {
-        logPhase.innerHTML = '<option value="" disabled selected>لا توجد مراحل لهذا المشروع</option>';
     }
 }
 
@@ -140,7 +140,12 @@ async function handleSubmit(e) {
     const quantity = parseFloat(logQuantity.value) || 0;
     const notes = logNotes.value.trim();
     const totalCost = parseFloat(logTotalCost.value) || 0;
-    const unitPrice = parseFloat(logUnitCost.value) || 0;
+
+    const selectedOption = logType.options[logType.selectedIndex];
+    const allowCustom = selectedOption?.dataset.custom === 'true';
+    const unitPrice = allowCustom
+        ? (parseFloat(logCustomPrice.value) || 0)
+        : (parseFloat(logUnitPrice.value) || 0);
 
     if (!date || !project || !phase || !typeId) {
         showMessage('يرجى ملء جميع الحقول المطلوبة');
@@ -150,9 +155,6 @@ async function handleSubmit(e) {
         showMessage('الكمية يجب أن تكون أكبر من صفر');
         return;
     }
-
-    const selectedOption = logType.options[logType.selectedIndex];
-    const allowCustom = selectedOption?.dataset.custom === 'true';
     if (allowCustom && unitPrice <= 0) {
         showMessage('يرجى إدخال السعر للمقطوعية');
         return;

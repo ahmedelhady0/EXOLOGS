@@ -1,0 +1,16 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    match /artifacts/exo-system/public/data/users/{userId} {
+      // القراءة مفتوحة عشان signUp() يقدر يتأكد إن اسم المستخدم مش مكرر قبل ما يعمل login
+      allow read: if true;
+
+      // كل مستخدم يقدر يعمل مستنده هو بس (uid بتاعه لازم يطابق الدوكيومنت آي دي)
+      allow create: if request.auth != null && request.auth.uid == userId;
+
+      // مفيش تعديل أو حذف من الكلاينت خالص — role/status/المشاريع المخصصة بتتغير من لوحة الأدمن
+      // (عبر Google Sheets / Code.gs)، مش عن طريق كتابة مباشرة على Firestore
+      allow update, delete: if false;
+    }
+  }
+}
