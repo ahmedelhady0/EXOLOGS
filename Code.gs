@@ -199,16 +199,20 @@ function handleGetSetupData(e) {
   const cached = cache.get(cacheKey);
   if (cached) return jsonResponse(JSON.parse(cached));
 
-  let projects = [], projectDates = {}, materials = [], suppliers = [], dailyLogPrices = {};
+  let projects = [], projectDates = {}, projectPhases = {}, materials = [], suppliers = [], dailyLogPrices = {};
 
   try {
     const projData = sheetToObjects(getOrCreateProjectsSheet());
     const newestDate = {};
     projData.forEach(p => {
       const name = String(p['اسم المشروع'] || '').trim();
-      if (!name || !String(p['الحالة'] || '').trim().includes('شغال')) return;
+      const phase = String(p['المرحلة'] || '').trim();
+      const status = String(p['الحالة'] || '').trim();
+      if (!name || !status.includes('شغال')) return;
       const d = p['تاريخ الإضافة'] ? new Date(p['تاريخ الإضافة']) : null;
       if (d && (!newestDate[name] || d > newestDate[name])) newestDate[name] = d;
+      if (phase && !projectPhases[name]) projectPhases[name] = [];
+      if (phase && !projectPhases[name].includes(phase)) projectPhases[name].push(phase);
     });
     projects = Object.keys(newestDate);
     Object.entries(newestDate).forEach(([k, v]) => { projectDates[k] = v.getTime(); });
@@ -239,7 +243,7 @@ function handleGetSetupData(e) {
     });
   } catch (err) { console.log('DailyLogPrices Error:', err.message); }
 
-  const result = { projects, projectDates, materials, suppliers, dailyLogPrices };
+  const result = { projects, projectDates, projectPhases, materials, suppliers, dailyLogPrices };
   cache.put(cacheKey, JSON.stringify(result), 30);
   return jsonResponse(result);
 }

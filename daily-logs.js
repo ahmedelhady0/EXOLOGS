@@ -1,7 +1,7 @@
 // ═══════════════════════════════════════════════════════════
 // صفحة تسجيل اليوميات — نظام EXO
 // ═══════════════════════════════════════════════════════════
-import { auth, showMessage, hideMessage, todayStr, DAILY_LOG_TYPES, formatCurrency } from './firebase-config.js';
+import { auth, showMessage, hideMessage, todayStr, DAILY_LOG_TYPES, formatCurrency, PHASES } from './firebase-config.js';
 import { onAuthStateChanged } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
 import { getSetupData, logDailyLog, getDailyLogs } from './sheets-service.js';
 
@@ -29,6 +29,7 @@ logDate.value = todayStr();
 
 let currentUsername = null;
 let projects = [];
+let projectPhases = {}; // مراحل كل مشروع من الشيت
 let dailyLogPrices = {}; // سيخزن أسعار أنواع اليوميات من الشيت
 
 onAuthStateChanged(auth, async (user) => {
@@ -48,6 +49,7 @@ async function loadSetupData() {
     try {
         const data = await getSetupData();
         projects = data.projects || [];
+        projectPhases = data.projectPhases || {};
 
         // تحميل أسعار اليوميات من الشيت
         dailyLogPrices = data.dailyLogPrices || {};
@@ -56,18 +58,31 @@ async function loadSetupData() {
         logProject.innerHTML = '<option value="" disabled selected>اختر المشروع</option>' +
             projects.map(p => `<option value="${p}">${p}</option>`).join('');
 
-        // تعبئة المراحل
-        const phases = ["فوم", "رولات", "أسمنتي", "دورات مياه"];
-        logPhase.innerHTML = '<option value="" disabled selected>اختر المرحلة</option>' +
-            phases.map(p => `<option value="${p}">${p}</option>`).join('');
+        // تعبئة المراحل (فاضية في الأول، هتتعبأ لما يختار مشروع)
+        logPhase.innerHTML = '<option value="" disabled selected>اختر المشروع أولاً</option>';
 
         // تعبئة أنواع اليوميات
         logType.innerHTML = '<option value="" disabled selected>اختر نوع اليومية</option>' +
             DAILY_LOG_TYPES.map(t => `<option value="${t.id}" data-price="${dailyLogPrices[t.id] || t.defaultPrice}" data-custom="${t.allowCustomPrice}">${t.name}</option>`).join('');
 
+        // لما يختار مشروع، حدث المراحل
+        logProject.addEventListener('change', updatePhasesForProject);
+
     } catch (err) {
         console.error(err);
         showMessage('فشل تحميل البيانات: ' + err.message);
+    }
+}
+
+function updatePhasesForProject() {
+    const selectedProject = logProject.value;
+    const phases = projectPhases[selectedProject] || [];
+    
+    if (phases.length > 0) {
+        logPhase.innerHTML = '<option value="" disabled selected>اختر المرحلة</option>' +
+            phases.map(p => `<option value="${p}">${p}</option>`).join('');
+    } else {
+        logPhase.innerHTML = '<option value="" disabled selected>لا توجد مراحل لهذا المشروع</option>';
     }
 }
 
