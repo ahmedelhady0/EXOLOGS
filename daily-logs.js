@@ -231,15 +231,6 @@ function resetDailyLogFields() {
     logTotalCost.value = '0';
     logCustomPrice.value = '';
 }
-        await loadRecentLogs();
-    } catch (err) {
-        console.error(err);
-        showMessage('❌ فشل الحفظ: ' + err.message);
-    } finally {
-        submitBtn.disabled = false;
-        submitBtn.textContent = 'تسجيل اليومية';
-    }
-}
 
 async function loadRecentLogs() {
     try {
