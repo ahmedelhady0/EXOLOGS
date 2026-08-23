@@ -7,12 +7,12 @@ import { getFirestore } from "https://www.gstatic.com/firebasejs/11.6.1/firebase
 import { getStorage } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-storage.js";
 
 const firebaseConfig = {
-    apiKey: "YOUR_API_KEY",
-    authDomain: "YOUR_PROJECT.firebaseapp.com",
-    projectId: "YOUR_PROJECT_ID",
-    storageBucket: "YOUR_PROJECT.appspot.com",
-    messagingSenderId: "YOUR_SENDER_ID",
-    appId: "YOUR_APP_ID"
+    apiKey: "AIzaSyD2E2_Tr98L66ck23idPOK1U6TgHKgFbdY",
+    authDomain: "exologs-1d046.firebaseapp.com",
+    projectId: "exologs-1d046",
+    storageBucket: "exologs-1d046.firebasestorage.app",
+    messagingSenderId: "1090407293498",
+    appId: "1:1090407293498:web:fe5d05474d875046390b03"
 };
 
 const app = initializeApp(firebaseConfig);
