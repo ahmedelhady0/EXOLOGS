@@ -1,0 +1,97 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>تسجيل اليوميات - EXO</title>
+    <link rel="stylesheet" href="styles.css">
+    <script src="https://cdn.tailwindcss.com"></script>
+</head>
+<body class="p-4 md:p-8 min-h-screen">
+    <div class="container p-6 md:p-8 w-full max-w-xl mx-auto fade-in">
+        <a href="home.html" class="back-link">→ رجوع للرئيسية</a>
+
+        <h1 class="text-2xl font-bold text-center mb-6" style="color:#1e3c72;">📝 تسجيل اليوميات</h1>
+
+        <form id="dailyLogForm" class="space-y-5 section-card p-6">
+            <div>
+                <label class="block text-sm font-semibold text-gray-700 mb-2">التاريخ</label>
+                <input type="date" id="logDate" required class="input-field block w-full p-3">
+            </div>
+
+            <div>
+                <label class="block text-sm font-semibold text-gray-700 mb-2">المشروع</label>
+                <select id="logProject" required class="input-field block w-full p-3">
+                    <option value="" disabled selected>اختر المشروع</option>
+                </select>
+            </div>
+
+            <div>
+                <label class="block text-sm font-semibold text-gray-700 mb-2">المرحلة</label>
+                <select id="logPhase" required class="input-field block w-full p-3">
+                    <option value="" disabled selected>اختر المرحلة</option>
+                </select>
+            </div>
+
+            <div>
+                <label class="block text-sm font-semibold text-gray-700 mb-2">نوع اليومية</label>
+                <select id="logType" required class="input-field block w-full p-3">
+                    <option value="" disabled selected>اختر نوع اليومية</option>
+                </select>
+            </div>
+
+            <div id="priceDisplaySection" class="hidden">
+                <label class="block text-sm font-semibold text-gray-700 mb-2">سعر الوحدة (تلقائي من الشيت)</label>
+                <div id="priceDisplay" class="price-display">
+                    السعر سيظهر هنا
+                </div>
+                <input type="hidden" id="logUnitPrice" value="0">
+            </div>
+
+            <div id="customPriceSection" class="hidden">
+                <label class="block text-sm font-semibold text-gray-700 mb-2">سعر المقطوعية (يدوي)</label>
+                <input type="number" id="logCustomPrice" min="0" step="0.01" class="input-field block w-full p-3" placeholder="أدخل السعر">
+            </div>
+
+            <div>
+                <label class="block text-sm font-semibold text-gray-700 mb-2">الكمية</label>
+                <input type="number" id="logQuantity" required min="0" step="any" class="input-field block w-full p-3" placeholder="مثال: 5">
+            </div>
+
+            <div id="totalCostDisplay" class="hidden">
+                <label class="block text-sm font-semibold text-gray-700 mb-2">إجمالي التكلفة</label>
+                <div class="price-display" id="totalCostDisplayValue">0 ر.س</div>
+                <input type="hidden" id="logTotalCost" value="0">
+            </div>
+
+            <div>
+                <label class="block text-sm font-semibold text-gray-700 mb-2">ملاحظات (اختياري)</label>
+                <textarea id="logNotes" rows="2" class="input-field block w-full p-3" placeholder="أي ملاحظات إضافية"></textarea>
+            </div>
+
+            <button type="submit" id="submitBtn" class="btn-secondary w-full py-4 px-6 text-lg font-bold">
+                تسجيل اليومية
+            </button>
+        </form>
+
+        <!-- سجل اليوميات الأخيرة -->
+        <div class="section-card p-6 mt-6">
+            <div class="flex justify-between items-center mb-4">
+                <h2 class="text-lg font-bold text-gray-800">آخر يومياتي</h2>
+            </div>
+            <div id="recentLogs">
+                <p class="text-center text-gray-500 text-sm">جاري التحميل...</p>
+            </div>
+        </div>
+    </div>
+
+    <div id="messageBox" class="fixed inset-0 modal-backdrop hidden items-center justify-center p-4">
+        <div class="modal-content p-6 shadow-xl w-full max-w-sm text-center">
+            <p id="messageText" class="text-gray-800 font-medium mb-4">رسالة النظام تظهر هنا</p>
+            <button id="closeMessageBtn" class="w-full py-2 px-4 btn-primary text-sm font-medium">إغلاق</button>
+        </div>
+    </div>
+
+    <script type="module" src="daily-logs.js"></script>
+</body>
+</html>

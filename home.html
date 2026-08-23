@@ -1,0 +1,61 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>الرئيسية - EXO</title>
+    <link rel="stylesheet" href="styles.css">
+    <script src="https://cdn.tailwindcss.com"></script>
+</head>
+<body class="p-4 md:p-8 min-h-screen">
+    <div class="container p-6 md:p-8 w-full max-w-2xl mx-auto fade-in">
+        <header class="mb-6">
+            <div class="flex justify-between items-center glass-effect p-4 rounded-lg">
+                <span id="userWelcome" class="status-badge">مرحباً</span>
+                <div class="flex space-x-3 space-x-reverse">
+                    <button type="button" id="signOutBtn" class="btn-danger py-2 px-4 text-sm font-semibold">خروج</button>
+                </div>
+            </div>
+        </header>
+
+        <h1 class="text-2xl title-gradient text-center mb-8">اختر العملية</h1>
+
+        <div class="grid grid-cols-1 gap-5 mb-8">
+            <a href="daily-logs.html" class="action-card action-daily">
+                <span class="action-icon">📝</span>
+                <div>
+                    <div class="action-title">تسجيل اليوميات</div>
+                    <div class="action-desc">تسجيل عمالة يومية: اختيار المشروع، المرحلة، النوع، والكمية</div>
+                </div>
+            </a>
+            <a href="custodies.html" class="action-card action-custody">
+                <span class="action-icon">💰</span>
+                <div>
+                    <div class="action-title">العهد</div>
+                    <div class="action-desc">إدارة العهدة: صرف، إيداع، ومتابعة المتبقي لكل مشرف</div>
+                </div>
+            </a>
+        </div>
+
+        <div class="section-card p-6">
+            <div class="flex justify-between items-center mb-4">
+                <h2 class="text-lg font-bold text-gray-800">ملخص سريع</h2>
+            </div>
+            <div id="quickStats" class="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                <div class="empty-hint text-center">
+                    <p class="text-gray-500">جاري التحميل...</p>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div id="messageBox" class="fixed inset-0 modal-backdrop hidden items-center justify-center p-4">
+        <div class="modal-content p-6 shadow-xl w-full max-w-sm text-center">
+            <p id="messageText" class="text-gray-800 font-medium mb-4">رسالة النظام تظهر هنا</p>
+            <button id="closeMessageBtn" class="w-full py-2 px-4 btn-primary text-sm font-medium">إغلاق</button>
+        </div>
+    </div>
+
+    <script type="module" src="home.js"></script>
+</body>
+</html>
