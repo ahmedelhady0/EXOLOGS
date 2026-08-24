@@ -91,18 +91,21 @@ function normalizeHeader(h) {
   return String(h).replace(/\n/g, ' ').replace(/\s+/g, ' ').trim();
 }
 
-function getHeaderRowIndex(sheet) {
-  const values = sheet.getDataRange().getValues();
+function getHeaderRowIndexFromValues_(values) {
   for (let i = 0; i < Math.min(5, values.length); i++) {
     if (String(values[i][0]).trim() === 'ID') return i;
   }
   return 0;
 }
 
+function getHeaderRowIndex(sheet) {
+  return getHeaderRowIndexFromValues_(sheet.getDataRange().getValues());
+}
+
 function sheetToObjects(sheet) {
   const values = sheet.getDataRange().getValues();
   if (values.length < 2) return [];
-  const headerIdx = getHeaderRowIndex(sheet);
+  const headerIdx = getHeaderRowIndexFromValues_(values); // بدون قراءة الشيت تاني
   const headers = values[headerIdx].map(normalizeHeader);
   return values.slice(headerIdx + 1)
     .filter(row => row.some(c => c !== '' && c !== null))
@@ -120,15 +123,8 @@ function getNormalizedHeaders(sheet) {
 }
 
 function jsonResponse(obj) {
-  // ContentService مع MIME type JSON - Apps Script بيضيف CORS headers تلقائي لـ "Anyone" access
   return ContentService.createTextOutput(JSON.stringify(obj))
     .setMimeType(ContentService.MimeType.JSON);
-}
-
-function doOptions(e) {
-  // للـ CORS preflight requests
-  return ContentService.createTextOutput('')
-    .setMimeType(ContentService.MimeType.TEXT);
 }
 
 // ── إنشاء الشيتات المطلوبة ─────────────────────────
@@ -252,7 +248,6 @@ function doGet(e) {
   const action = e.parameter.action;
   try {
     if (action === 'getSetupData') return handleGetSetupData(e);
-    if (action === 'getProjectsData') return handleGetProjectsData(e);
     if (action === 'getUserRole') return handleGetUserRole(e);
     if (action === 'getUsers') return handleGetUsers();
     if (action === 'getDailyLogs') return handleGetDailyLogs(e);
@@ -264,18 +259,7 @@ function doGet(e) {
   }
 }
 
-// دالة لمعالجة طلبات OPTIONS (CORS preflight)
-function doOptions(e) {
-  return ContentService.createTextOutput('')
-    .setMimeType(ContentService.MimeType.TEXT);
-}
-
 function doPost(e) {
-  // Handle CORS preflight
-  if (e && e.postData && e.postData.type === 'options') {
-    return jsonResponse({ ok: true });
-  }
-  
   try {
     const body = JSON.parse(e.postData.contents);
     const action = body.action;
@@ -309,7 +293,7 @@ function handleGetSetupData(e) {
   const cached = cache.get(cacheKey);
   if (cached) return jsonResponse(JSON.parse(cached));
 
-  let projects = [], projectDates = {}, allProjects = [], projectPhases = {}, dailyLogPrices = {}, phases = [], dailyLogTypes = [];
+  let projects = [], projectDates = {}, allProjects = [], projectPhases = {}, materials = [], suppliers = [], dailyLogPrices = {}, phases = [], dailyLogTypes = [];
 
   try {
     const projData = sheetToObjects(getOrCreateProjectsSheet());
@@ -342,6 +326,20 @@ function handleGetSetupData(e) {
     projectPhases = phasesByProject;
   } catch (err) { console.log('Projects Error:', err.message); }
 
+  try {
+    const matData = sheetToObjects(getOrCreateMaterialsSheet());
+    materials = matData.map(row => ({
+      phase: String(row['اسم مختصر للبند'] || '').trim(),
+      name: String(row['المواد المستخدمة'] || '').trim(),
+      unit: String(row['الوحدة'] || '').trim()
+    })).filter(m => m.name && m.phase);
+  } catch (err) { console.log('Materials Error:', err.message); }
+
+  try {
+    suppliers = sheetToObjects(getOrCreateSuppliersSheet())
+      .map(s => String(s['اسم المورد'] || '').trim()).filter(Boolean);
+  } catch (err) { console.log('Suppliers Error:', err.message); }
+
   // أسعار اليوميات (خريطة للتوافق القديم) + قائمة الأنواع الكاملة (المصدر الفعلي للفورم دلوقتي)
   try {
     dailyLogTypes = getDailyLogTypesList_();
@@ -353,40 +351,8 @@ function handleGetSetupData(e) {
     phases = getPhasesList_();
   } catch (err) { console.log('Phases Error:', err.message); }
 
-  const result = { projects, projectDates, allProjects, projectPhases, dailyLogPrices, dailyLogTypes, phases };
-  cache.put(cacheKey, JSON.stringify(result), 30);
-  return jsonResponse(result);
-}
-
-function handleGetProjectsData(e) {
-  const cache = CacheService.getScriptCache();
-  const cacheKey = 'projectsData_exo_v1';
-
-  if (e.parameter && e.parameter.refresh) cache.remove(cacheKey);
-
-  const cached = cache.get(cacheKey);
-  if (cached) return jsonResponse(JSON.parse(cached));
-
-  let projects = [], projectPhases = {};
-
-  try {
-    const projData = sheetToObjects(getOrCreateProjectsSheet());
-    const newestDate = {};
-    projData.forEach(p => {
-      const name = String(p['اسم المشروع'] || '').trim();
-      const phase = String(p['المرحلة'] || '').trim();
-      const status = String(p['الحالة'] || '').trim();
-      if (!name || !status.includes('شغال')) return;
-      const d = p['تاريخ الإضافة'] ? new Date(p['تاريخ الإضافة']) : null;
-      if (d && (!newestDate[name] || d > newestDate[name])) newestDate[name] = d;
-      if (phase && !projectPhases[name]) projectPhases[name] = [];
-      if (phase && !projectPhases[name].includes(phase)) projectPhases[name].push(phase);
-    });
-    projects = Object.keys(newestDate);
-  } catch (err) { console.log('Projects Error:', err.message); }
-
-  const result = { projects, projectPhases };
-  cache.put(cacheKey, JSON.stringify(result), 30);
+  const result = { projects, projectDates, allProjects, projectPhases, materials, suppliers, dailyLogPrices, dailyLogTypes, phases };
+  cache.put(cacheKey, JSON.stringify(result), 120);
   return jsonResponse(result);
 }
 
@@ -587,15 +553,22 @@ function handleDepositAdvance(params) {
 }
 
 function handleRegisterUser(body) {
-  // حماية لو الجسم فاضي أو مش JSON
-  if (!body || typeof body !== 'object') {
-    return jsonResponse({ ok: false, error: 'بيانات الطلب فاضية أو غير صالحة: ' + JSON.stringify(body) });
-  }
-  
   const sheet = getOrCreateUsersSheet();
-  const role = String(body.username || '').toLowerCase() === 'admin' ? 'admin' : 'supervisor';
-  // المشاريع المخصصة: فاضية للإنشاء الجديد (الأدمن يقدر يحددها لاحقاً)
-  sheet.appendRow([body.uid || '', body.username || '', body.email || '', role, new Date(), 'نشط', '']);
+  const uid = String((body && body.uid) || '').trim();
+  const username = String((body && body.username) || '').trim();
+  const email = String((body && body.email) || '').trim();
+  const role = username.toLowerCase() === 'admin' ? 'admin' : 'supervisor';
+
+  // تجنب تكرار الصف لو registerUser اتنادت أكتر من مرة لنفس الحساب (مثلاً بعد فشل شبكة وإعادة محاولة)
+  const existing = sheetToObjects(sheet).find(u =>
+    (uid && String(u['uid'] || '').trim() === uid) ||
+    (username && String(u['username'] || '').trim().toLowerCase() === username.toLowerCase())
+  );
+  if (existing) {
+    return jsonResponse({ ok: true, role: existing['role'] || role, alreadyExists: true });
+  }
+
+  sheet.appendRow([uid, username, email, role, new Date(), 'نشط']);
   return jsonResponse({ ok: true, role });
 }
 

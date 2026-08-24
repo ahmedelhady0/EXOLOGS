@@ -5,7 +5,7 @@
 // ═══════════════════════════════════════════════════════════
 import { auth, showMessage, hideMessage, todayStr, formatCurrency } from './firebase-config.js';
 import { onAuthStateChanged } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
-import { getSetupData, getProjectsData, logDailyLog, getDailyLogs, getUserRole } from './sheets-service.js';
+import { getSetupData, logDailyLog, getDailyLogs, getUserRole } from './sheets-service.js';
 
 const logDate = document.getElementById('logDate');
 const logProject = document.getElementById('logProject');
@@ -45,16 +45,21 @@ onAuthStateChanged(auth, async (user) => {
     if (!user) { window.location.href = 'index.html'; return; }
     currentUsername = user.email.replace('@exo-system.local', '');
 
-    try {
-        const info = await getUserRole(user.email);
-        isAdmin = info.role === 'admin';
-        assignedProjects = info.projects || [];
-    } catch (err) {
-        console.error(err);
+    // الثلاث نداءات دي مالهاش علاقة ببعض، فبنطلقهم مع بعض بدل ما ننتظر كل واحد لوحده
+    // (كل نداء لـ Apps Script بياخد وقت، فتشغيلهم متوازي بيقلل وقت التحميل بشكل كبير)
+    const [roleInfo, setupData, logsData] = await Promise.all([
+        getUserRole(user.email).catch(err => { console.error(err); return null; }),
+        getSetupData().catch(err => { console.error(err); showMessage('فشل تحميل البيانات: ' + err.message); return null; }),
+        getDailyLogs(currentUsername).catch(err => { console.error(err); return []; })
+    ]);
+
+    if (roleInfo) {
+        isAdmin = roleInfo.role === 'admin';
+        assignedProjects = roleInfo.projects || [];
     }
 
-    await loadSetupData();
-    await loadRecentLogs();
+    if (setupData) applySetupData(setupData);
+    renderRecentLogs(logsData || []);
 
     logProject.addEventListener('change', updatePhaseOptions);
     logType.addEventListener('change', handleTypeChange);
@@ -64,33 +69,24 @@ onAuthStateChanged(auth, async (user) => {
     submitBtn.addEventListener('click', handleSubmitBatch);
 });
 
-async function loadSetupData() {
-    try {
-        const [projectsData, setupData] = await Promise.all([
-            getProjectsData(),
-            getSetupData()
-        ]);
-        projects = projectsData.projects || [];
-        projectPhases = projectsData.projectPhases || {};
-        dailyLogTypes = setupData.dailyLogTypes || [];
+function applySetupData(data) {
+    projects = data.projects || [];
+    dailyLogTypes = data.dailyLogTypes || [];
+    projectPhases = data.projectPhases || {};
 
-        // لو المشرف معاه مشاريع مخصصة، يشوفها بس — غير كده يشوف كل المشاريع (زي الأدمن)
-        const visibleProjects = (!isAdmin && assignedProjects.length > 0)
-            ? projects.filter(p => assignedProjects.includes(p))
-            : projects;
+    // لو المشرف معاه مشاريع مخصصة، يشوفها بس — غير كده يشوف كل المشاريع (زي الأدمن)
+    const visibleProjects = (!isAdmin && assignedProjects.length > 0)
+        ? projects.filter(p => assignedProjects.includes(p))
+        : projects;
 
-        logProject.innerHTML = '<option value="" disabled selected>اختر المشروع</option>' +
-            visibleProjects.map(p => `<option value="${p}">${p}</option>`).join('');
+    logProject.innerHTML = '<option value="" disabled selected>اختر المشروع</option>' +
+        visibleProjects.map(p => `<option value="${p}">${p}</option>`).join('');
 
-        // المرحلة بتتحدد لما تختار المشروع (كل مشروع له مراحله الشغالة بس من شيت "بيانات المشاريع")
-        updatePhaseOptions();
+    // المرحلة بتتحدد لما تختار المشروع (كل مشروع له مراحله الشغالة بس من شيت "بيانات المشاريع")
+    updatePhaseOptions();
 
-        logType.innerHTML = '<option value="" disabled selected>اختر نوع اليومية</option>' +
-            dailyLogTypes.map(t => `<option value="${t.id}" data-price="${t.defaultPrice}" data-custom="${t.allowCustomPrice}">${t.name}</option>`).join('');
-    } catch (err) {
-        console.error(err);
-        showMessage('فشل تحميل البيانات: ' + err.message);
-    }
+    logType.innerHTML = '<option value="" disabled selected>اختر نوع اليومية</option>' +
+        dailyLogTypes.map(t => `<option value="${t.id}" data-price="${t.defaultPrice}" data-custom="${t.allowCustomPrice}">${t.name}</option>`).join('');
 }
 
 function updatePhaseOptions() {
@@ -267,17 +263,25 @@ async function handleSubmitBatch() {
 async function loadRecentLogs() {
     try {
         const logs = await getDailyLogs(currentUsername);
+        renderRecentLogs(logs || []);
+    } catch (err) {
+        console.error(err);
+        recentLogs.innerHTML = '<p class="text-center text-red-500 text-sm">فشل تحميل السجل</p>';
+    }
+}
 
+function renderRecentLogs(logs) {
+    try {
         if (!logs || logs.length === 0) {
             recentLogs.innerHTML = '<p class="text-center text-gray-500 text-sm">لا توجد يوميات مسجلة بعد</p>';
             return;
         }
 
-        // تجميع البنود حسب معرف الدفعة عشان كل تسجيل يظهر سوا (بند/بندين/تلاتة..)
+        // تجميع البنود حسب نفس الـ id عشان كل تسجيل يظهر سوا (بند/بندين/تلاتة..)
         const batches = [];
         const batchIndex = {};
         logs.forEach(l => {
-            const key = l.batchId || l.id; // سجلات قديمة من قبل التحديث ده مالهاش batchId فكل سطر بيتعامل كدفعة لوحده
+            const key = l.batchId || l.id; // سجلات قديمة قبل توحيد العمودين لسه بتتجمع صح عن طريق batchId
             if (!batchIndex[key]) {
                 batchIndex[key] = { date: l.date, project: l.project, phase: l.phase, items: [] };
                 batches.push(batchIndex[key]);

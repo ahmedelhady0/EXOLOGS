@@ -3,7 +3,7 @@
 // ═══════════════════════════════════════════════════════════
 
 // ⚠️ غيّر هذا الرابط لرابط Web App الخاص بك بعد نشر Code.gs
-const WEB_APP_URL = "https://script.google.com/macros/s/AKfycbwM3v8UioGSsOjFMqFU5lPyufahE9bTFcJWIdX3RyPXe4NIklC4MWH_VjUQG9IQGcJj4Q/exec";
+const WEB_APP_URL = "https://script.google.com/macros/s/YOUR_WEB_APP_ID/exec";
 
 async function callGet(params) {
     const url = new URL(WEB_APP_URL);
@@ -57,13 +57,6 @@ export async function getSetupData(forceRefresh = false) {
     );
 }
 
-export async function getProjectsData(forceRefresh = false) {
-    if (forceRefresh) bustCache('cache_projects_exo');
-    return cacheGet('cache_projects_exo', 5 * 60 * 1000, () =>
-        callGet({ action: 'getProjectsData', ...(forceRefresh ? { refresh: 1 } : {}) })
-    );
-}
-
 export async function getUserRole(email) {
     return callGet({ action: 'getUserRole', email });
 }
@@ -95,13 +88,6 @@ export async function getAdvanceMovements(supervisor = null) {
 export async function logDailyLog(data) {
     const r = await callPost({ action: 'logDailyLog', ...data });
     // مسح الكاش
-    try { localStorage.removeItem('cache_dailylogs_' + data.supervisor); } catch (_) {}
-    try { localStorage.removeItem('cache_dailylogs_all'); } catch (_) {}
-    return r;
-}
-
-export async function logDailyLogBatch(data) {
-    const r = await callPost({ action: 'logDailyLog', ...data });
     try { localStorage.removeItem('cache_dailylogs_' + data.supervisor); } catch (_) {}
     try { localStorage.removeItem('cache_dailylogs_all'); } catch (_) {}
     return r;

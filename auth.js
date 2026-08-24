@@ -43,7 +43,7 @@ async function signIn() {
         showMessage('تم تسجيل الدخول بنجاح!');
         setTimeout(() => { window.location.href = 'home.html'; }, 1000);
     } catch (error) {
-        console.error('SignIn Error:', error);
+        console.error(error);
         if (['auth/user-not-found', 'auth/wrong-password', 'auth/invalid-credential'].includes(error.code)) {
             showMessage('اسم المستخدم أو كلمة المرور غير صحيحة');
         } else {
@@ -53,7 +53,6 @@ async function signIn() {
 }
 
 async function signUp() {
-    console.log('🔄 signUp() started');
     const username = authEmailInput.value.trim();
     const password = authPasswordInput.value.trim();
 
@@ -83,41 +82,26 @@ async function signUp() {
             return;
         }
         const email = usernameToEmail(username);
-        console.log('📝 Creating Firebase user:', email);
         const cred = await createUserWithEmailAndPassword(auth, email, password);
-        console.log('✅ Firebase user created:', cred.user.uid);
-        
         const role = username.toLowerCase() === adminUsername.toLowerCase() ? 'admin' : 'supervisor';
 
         await setDoc(doc(db, `artifacts/${appId}/public/data/users`, cred.user.uid), {
             username, role, email, createdAt: new Date(), status: 'نشط'
         });
-        console.log('✅ Firestore user doc created');
 
-        // حفظ في Google Sheets
-        console.log('📤 Calling registerUser for Sheets...');
+        // تسجيل المستخدم كمان في شيت Users (مصدر الصلاحيات وتعيين المشاريع في التطبيق)
+        // لو فشل النداء ده لأي سبب (مشكلة شبكة مثلاً)، الحساب في Firebase يفضل شغال عادي،
+        // بس الأدمن مش هيقدر يديله صلاحيات مشاريع لحد ما يتسجل في الشيت — فبنعلم في الكونسول للمتابعة
         try {
-            const result = await registerUser({
-                uid: cred.user.uid,
-                username,
-                email,
-                role,
-                requesterEmail: email
-            });
-            console.log('✅ Sheets registerUser result:', result);
-            if (!result.ok) {
-                throw new Error(result.error || 'فشل الحفظ في Sheets');
-            }
+            await registerUser({ uid: cred.user.uid, username, email });
         } catch (sheetErr) {
-            console.error('❌ Sheets Error:', sheetErr);
-            showMessage('⚠️ تم إنشاء الحساب لكن فشل الحفظ في Sheets: ' + sheetErr.message);
-            return;
+            console.error('فشل تسجيل المستخدم في شيت Users:', sheetErr);
         }
 
         showMessage('تم إنشاء الحساب! يمكنك تسجيل الدخول الآن');
         setTimeout(() => { hideMessage(); }, 1800);
     } catch (error) {
-        console.error('❌ SignUp Error:', error);
+        console.error(error);
         if (error.code === 'auth/email-already-in-use') {
             showMessage('اسم المستخدم مستخدم بالفعل');
         } else if (error.code === 'auth/weak-password') {
