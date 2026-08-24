@@ -3,7 +3,7 @@
 // ═══════════════════════════════════════════════════════════
 
 // ⚠️ غيّر هذا الرابط لرابط Web App الخاص بك بعد نشر Code.gs
-const WEB_APP_URL = "https://script.google.com/macros/s/YOUR_WEB_APP_ID/exec";
+const WEB_APP_URL = "https://script.google.com/macros/s/AKfycbwM3v8UioGSsOjFMqFU5lPyufahE9bTFcJWIdX3RyPXe4NIklC4MWH_VjUQG9IQGcJj4Q/exec";
 
 async function callGet(params) {
     const url = new URL(WEB_APP_URL);
