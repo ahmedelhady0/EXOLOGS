@@ -12,6 +12,8 @@ const signInBtn = document.getElementById('signInBtn');
 const signUpBtn = document.getElementById('signUpBtn');
 const closeMessageBtn = document.getElementById('closeMessageBtn');
 
+let isSigningUp = false; // بيمنع الـ auth-state-listener تحت من التحويل لـ home.html قبل ما signUp() يخلص كتابة الشيت
+
 function usernameToEmail(username) {
     return `${username}@exo-system.local`;
 }
@@ -74,6 +76,7 @@ async function signUp() {
         return;
     }
 
+    isSigningUp = true;
     showMessage('جاري إنشاء الحساب...');
     try {
         const existing = await findUserByUsername(username);
@@ -98,8 +101,8 @@ async function signUp() {
             console.error('فشل تسجيل المستخدم في شيت Users:', sheetErr);
         }
 
-        showMessage('تم إنشاء الحساب! يمكنك تسجيل الدخول الآن');
-        setTimeout(() => { hideMessage(); }, 1800);
+        showMessage('✅ تم إنشاء الحساب بنجاح');
+        setTimeout(() => { window.location.href = 'home.html'; }, 1000);
     } catch (error) {
         console.error(error);
         if (error.code === 'auth/email-already-in-use') {
@@ -109,6 +112,8 @@ async function signUp() {
         } else {
             showMessage(`فشل إنشاء الحساب: ${error.message}`);
         }
+    } finally {
+        isSigningUp = false;
     }
 }
 
@@ -117,6 +122,7 @@ signUpBtn?.addEventListener('click', signUp);
 closeMessageBtn?.addEventListener('click', hideMessage);
 
 onAuthStateChanged(auth, (user) => {
+    if (isSigningUp) return; // بلاش تحويل مبكر — خلي signUp() يخلص كتابة Firestore + الشيت الأول
     if (user && (window.location.pathname.endsWith('index.html') || window.location.pathname === '/')) {
         window.location.href = 'home.html';
     }
