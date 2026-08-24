@@ -4,6 +4,7 @@
 import { auth, db, appId, adminUsername, showMessage, hideMessage } from './firebase-config.js';
 import { onAuthStateChanged, createUserWithEmailAndPassword, signInWithEmailAndPassword } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
 import { doc, getDoc, setDoc, collection, getDocs, query, where } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
+import { registerUser } from './sheets-service.js';
 
 const authEmailInput = document.getElementById('authEmail');
 const authPasswordInput = document.getElementById('authPassword');
@@ -87,6 +88,19 @@ async function signUp() {
         await setDoc(doc(db, `artifacts/${appId}/public/data/users`, cred.user.uid), {
             username, role, email, createdAt: new Date(), status: 'نشط'
         });
+
+        // حفظ في Google Sheets كمان
+        try {
+            await registerUser({
+                uid: cred.user.uid,
+                username,
+                email,
+                role,
+                requesterEmail: email
+            });
+        } catch (sheetErr) {
+            console.warn('فشل الحفظ في Sheets:', sheetErr);
+        }
 
         showMessage('تم إنشاء الحساب! يمكنك تسجيل الدخول الآن');
         setTimeout(() => { hideMessage(); }, 1800);

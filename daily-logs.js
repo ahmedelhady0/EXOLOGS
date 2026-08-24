@@ -5,7 +5,7 @@
 // ═══════════════════════════════════════════════════════════
 import { auth, showMessage, hideMessage, todayStr, formatCurrency } from './firebase-config.js';
 import { onAuthStateChanged } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
-import { getSetupData, logDailyLog, getDailyLogs, getUserRole } from './sheets-service.js';
+import { getSetupData, getProjectsData, logDailyLog, getDailyLogs, getUserRole } from './sheets-service.js';
 
 const logDate = document.getElementById('logDate');
 const logProject = document.getElementById('logProject');
@@ -66,10 +66,13 @@ onAuthStateChanged(auth, async (user) => {
 
 async function loadSetupData() {
     try {
-        const data = await getSetupData();
-        projects = data.projects || [];
-        dailyLogTypes = data.dailyLogTypes || [];
-        projectPhases = data.projectPhases || {};
+        const [projectsData, setupData] = await Promise.all([
+            getProjectsData(),
+            getSetupData()
+        ]);
+        projects = projectsData.projects || [];
+        projectPhases = projectsData.projectPhases || {};
+        dailyLogTypes = setupData.dailyLogTypes || [];
 
         // لو المشرف معاه مشاريع مخصصة، يشوفها بس — غير كده يشوف كل المشاريع (زي الأدمن)
         const visibleProjects = (!isAdmin && assignedProjects.length > 0)

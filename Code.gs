@@ -245,6 +245,7 @@ function doGet(e) {
   const action = e.parameter.action;
   try {
     if (action === 'getSetupData') return handleGetSetupData(e);
+    if (action === 'getProjectsData') return handleGetProjectsData(e);
     if (action === 'getUserRole') return handleGetUserRole(e);
     if (action === 'getUsers') return handleGetUsers();
     if (action === 'getDailyLogs') return handleGetDailyLogs(e);
@@ -290,7 +291,7 @@ function handleGetSetupData(e) {
   const cached = cache.get(cacheKey);
   if (cached) return jsonResponse(JSON.parse(cached));
 
-  let projects = [], projectDates = {}, allProjects = [], projectPhases = {}, materials = [], suppliers = [], dailyLogPrices = {}, phases = [], dailyLogTypes = [];
+  let projects = [], projectDates = {}, allProjects = [], projectPhases = {}, dailyLogPrices = {}, phases = [], dailyLogTypes = [];
 
   try {
     const projData = sheetToObjects(getOrCreateProjectsSheet());
@@ -323,20 +324,6 @@ function handleGetSetupData(e) {
     projectPhases = phasesByProject;
   } catch (err) { console.log('Projects Error:', err.message); }
 
-  try {
-    const matData = sheetToObjects(getOrCreateMaterialsSheet());
-    materials = matData.map(row => ({
-      phase: String(row['اسم مختصر للبند'] || '').trim(),
-      name: String(row['المواد المستخدمة'] || '').trim(),
-      unit: String(row['الوحدة'] || '').trim()
-    })).filter(m => m.name && m.phase);
-  } catch (err) { console.log('Materials Error:', err.message); }
-
-  try {
-    suppliers = sheetToObjects(getOrCreateSuppliersSheet())
-      .map(s => String(s['اسم المورد'] || '').trim()).filter(Boolean);
-  } catch (err) { console.log('Suppliers Error:', err.message); }
-
   // أسعار اليوميات (خريطة للتوافق القديم) + قائمة الأنواع الكاملة (المصدر الفعلي للفورم دلوقتي)
   try {
     dailyLogTypes = getDailyLogTypesList_();
@@ -348,7 +335,39 @@ function handleGetSetupData(e) {
     phases = getPhasesList_();
   } catch (err) { console.log('Phases Error:', err.message); }
 
-  const result = { projects, projectDates, allProjects, projectPhases, materials, suppliers, dailyLogPrices, dailyLogTypes, phases };
+  const result = { projects, projectDates, allProjects, projectPhases, dailyLogPrices, dailyLogTypes, phases };
+  cache.put(cacheKey, JSON.stringify(result), 30);
+  return jsonResponse(result);
+}
+
+function handleGetProjectsData(e) {
+  const cache = CacheService.getScriptCache();
+  const cacheKey = 'projectsData_exo_v1';
+
+  if (e.parameter && e.parameter.refresh) cache.remove(cacheKey);
+
+  const cached = cache.get(cacheKey);
+  if (cached) return jsonResponse(JSON.parse(cached));
+
+  let projects = [], projectPhases = {};
+
+  try {
+    const projData = sheetToObjects(getOrCreateProjectsSheet());
+    const newestDate = {};
+    projData.forEach(p => {
+      const name = String(p['اسم المشروع'] || '').trim();
+      const phase = String(p['المرحلة'] || '').trim();
+      const status = String(p['الحالة'] || '').trim();
+      if (!name || !status.includes('شغال')) return;
+      const d = p['تاريخ الإضافة'] ? new Date(p['تاريخ الإضافة']) : null;
+      if (d && (!newestDate[name] || d > newestDate[name])) newestDate[name] = d;
+      if (phase && !projectPhases[name]) projectPhases[name] = [];
+      if (phase && !projectPhases[name].includes(phase)) projectPhases[name].push(phase);
+    });
+    projects = Object.keys(newestDate);
+  } catch (err) { console.log('Projects Error:', err.message); }
+
+  const result = { projects, projectPhases };
   cache.put(cacheKey, JSON.stringify(result), 30);
   return jsonResponse(result);
 }
