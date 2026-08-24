@@ -1,7 +1,9 @@
 // ═══════════════════════════════════════════════════════════
 // صفحة تسجيل اليوميات — نظام EXO
+// المشرف يقدر يضيف أكتر من بند (نوع + كمية) في نفس التسجيل
+// وكلهم بيتسجلوا مع بعض بمعرف دفعة واحد (batchId)
 // ═══════════════════════════════════════════════════════════
-import { auth, showMessage, hideMessage, todayStr, DAILY_LOG_TYPES, formatCurrency } from './firebase-config.js';
+import { auth, showMessage, hideMessage, todayStr, formatCurrency } from './firebase-config.js';
 import { onAuthStateChanged } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
 import { getSetupData, logDailyLog, getDailyLogs, getUserRole } from './sheets-service.js';
 
@@ -13,12 +15,16 @@ const logQuantity = document.getElementById('logQuantity');
 const logNotes = document.getElementById('logNotes');
 const logUnitPrice = document.getElementById('logUnitPrice');
 const logCustomPrice = document.getElementById('logCustomPrice');
-const logTotalCost = document.getElementById('logTotalCost');
 const priceDisplaySection = document.getElementById('priceDisplaySection');
 const priceDisplay = document.getElementById('priceDisplay');
 const customPriceSection = document.getElementById('customPriceSection');
-const totalCostDisplay = document.getElementById('totalCostDisplay');
-const totalCostDisplayValue = document.getElementById('totalCostDisplayValue');
+const itemTotalDisplay = document.getElementById('itemTotalDisplay');
+const itemTotalDisplayValue = document.getElementById('itemTotalDisplayValue');
+const addItemBtn = document.getElementById('addItemBtn');
+const cartList = document.getElementById('cartList');
+const cartCount = document.getElementById('cartCount');
+const cartGrandTotal = document.getElementById('cartGrandTotal');
+const cartGrandTotalValue = document.getElementById('cartGrandTotalValue');
 const recentLogs = document.getElementById('recentLogs');
 const submitBtn = document.getElementById('submitBtn');
 const closeMessageBtn = document.getElementById('closeMessageBtn');
@@ -29,10 +35,10 @@ logDate.value = todayStr();
 
 let currentUsername = null;
 let projects = [];
-let projectPhases = {}; // مراحل كل مشروع من الشيت
 let isAdmin = false;
 let assignedProjects = []; // المشاريع المخصصة للمشرف الحالي (فاضية = بيشوف الكل)
-let dailyLogPrices = {}; // سيخزن أسعار أنواع اليوميات من الشيت
+let dailyLogTypes = []; // أنواع اليوميات (id/اسم/سعر/سعر يدوي) — من شيت "أسعار اليوميات"
+let cart = []; // البنود المضافة قبل الحفظ النهائي — كلها بتتسجل مع بعض بمعرف دفعة واحد
 
 onAuthStateChanged(auth, async (user) => {
     if (!user) { window.location.href = 'index.html'; return; }
@@ -49,63 +55,43 @@ onAuthStateChanged(auth, async (user) => {
     await loadSetupData();
     await loadRecentLogs();
 
-    document.getElementById('dailyLogForm').addEventListener('submit', handleSubmit);
     logType.addEventListener('change', handleTypeChange);
-    logQuantity.addEventListener('input', calculateTotal);
-    logCustomPrice.addEventListener('input', calculateTotal);
+    logQuantity.addEventListener('input', calculateItemTotal);
+    logCustomPrice.addEventListener('input', calculateItemTotal);
+    addItemBtn.addEventListener('click', handleAddItem);
+    submitBtn.addEventListener('click', handleSubmitBatch);
 });
 
 async function loadSetupData() {
     try {
         const data = await getSetupData();
         projects = data.projects || [];
-        projectPhases = data.projectPhases || {};
-
-        // تحميل أسعار اليوميات من الشيت
-        dailyLogPrices = data.dailyLogPrices || {};
+        dailyLogTypes = data.dailyLogTypes || [];
 
         // لو المشرف معاه مشاريع مخصصة، يشوفها بس — غير كده يشوف كل المشاريع (زي الأدمن)
         const visibleProjects = (!isAdmin && assignedProjects.length > 0)
             ? projects.filter(p => assignedProjects.includes(p))
             : projects;
 
-        // تعبئة المشاريع
         logProject.innerHTML = '<option value="" disabled selected>اختر المشروع</option>' +
             visibleProjects.map(p => `<option value="${p}">${p}</option>`).join('');
 
-        // تعبئة المراحل (فاضية في الأول، هتتعبأ لما يختار مشروع)
-        logPhase.innerHTML = '<option value="" disabled selected>اختر المشروع أولاً</option>';
+        const phases = data.phases || [];
+        logPhase.innerHTML = '<option value="" disabled selected>اختر المرحلة</option>' +
+            phases.map(p => `<option value="${p}">${p}</option>`).join('');
 
-        // تعبئة أنواع اليوميات
         logType.innerHTML = '<option value="" disabled selected>اختر نوع اليومية</option>' +
-            DAILY_LOG_TYPES.map(t => `<option value="${t.id}" data-price="${dailyLogPrices[t.id] || t.defaultPrice}" data-custom="${t.allowCustomPrice}">${t.name}</option>`).join('');
-
-        // لما يختار مشروع، حدث المراحل
-        logProject.removeEventListener('change', updatePhasesForProject);
-        logProject.addEventListener('change', updatePhasesForProject);
-
+            dailyLogTypes.map(t => `<option value="${t.id}" data-price="${t.defaultPrice}" data-custom="${t.allowCustomPrice}">${t.name}</option>`).join('');
     } catch (err) {
         console.error(err);
         showMessage('فشل تحميل البيانات: ' + err.message);
     }
 }
 
-function updatePhasesForProject() {
-    const selectedProject = logProject.value;
-    const phases = projectPhases[selectedProject] || [];
-    
-    if (phases.length > 0) {
-        logPhase.innerHTML = '<option value="" disabled selected>اختر المرحلة</option>' +
-            phases.map(p => `<option value="${p}">${p}</option>`).join('');
-    } else {
-        logPhase.innerHTML = '<option value="" disabled selected>لا توجد مراحل لهذا المشروع</option>';
-    }
-}
-
 function handleTypeChange() {
     const selectedOption = logType.options[logType.selectedIndex];
-    const price = parseFloat(selectedOption.dataset.price) || 0;
-    const allowCustom = selectedOption.dataset.custom === 'true';
+    const price = parseFloat(selectedOption?.dataset.price) || 0;
+    const allowCustom = selectedOption?.dataset.custom === 'true';
 
     logUnitPrice.value = price;
 
@@ -120,89 +106,128 @@ function handleTypeChange() {
         priceDisplay.textContent = formatCurrency(price);
         priceDisplay.classList.remove('manual');
     }
-    calculateTotal();
+    calculateItemTotal();
 }
 
-function calculateTotal() {
-    const qty = parseFloat(logQuantity.value) || 0;
-    let unitPrice = parseFloat(logUnitPrice.value) || 0;
-
+function currentItemAllowsCustom() {
     const selectedOption = logType.options[logType.selectedIndex];
-    const allowCustom = selectedOption?.dataset.custom === 'true';
+    return selectedOption?.dataset.custom === 'true';
+}
 
-    if (allowCustom) {
-        unitPrice = parseFloat(logCustomPrice.value) || 0;
-        priceDisplaySection.classList.add('hidden');
-    }
+function currentItemUnitPrice() {
+    return currentItemAllowsCustom()
+        ? (parseFloat(logCustomPrice.value) || 0)
+        : (parseFloat(logUnitPrice.value) || 0);
+}
 
+function calculateItemTotal() {
+    const qty = parseFloat(logQuantity.value) || 0;
+    const unitPrice = currentItemUnitPrice();
     const total = qty * unitPrice;
-    logTotalCost.value = total.toFixed(2);
 
     if (qty > 0 && unitPrice > 0) {
-        totalCostDisplay.classList.remove('hidden');
-        totalCostDisplayValue.textContent = formatCurrency(total);
+        itemTotalDisplay.classList.remove('hidden');
+        itemTotalDisplayValue.textContent = formatCurrency(total);
     } else {
-        totalCostDisplay.classList.add('hidden');
+        itemTotalDisplay.classList.add('hidden');
     }
 }
 
-async function handleSubmit(e) {
-    e.preventDefault();
+function handleAddItem() {
+    const typeId = logType.value;
+    if (!typeId) { showMessage('يرجى اختيار نوع اليومية'); return; }
 
+    const quantity = parseFloat(logQuantity.value) || 0;
+    if (quantity <= 0) { showMessage('الكمية يجب أن تكون أكبر من صفر'); return; }
+
+    const allowCustom = currentItemAllowsCustom();
+    const unitPrice = currentItemUnitPrice();
+    if (allowCustom && unitPrice <= 0) { showMessage('يرجى إدخال السعر للمقطوعية'); return; }
+
+    const selectedOption = logType.options[logType.selectedIndex];
+    const typeInfo = dailyLogTypes.find(t => t.id === typeId);
+    const typeName = typeInfo?.name || selectedOption?.textContent || typeId;
+    const totalCost = quantity * unitPrice;
+
+    cart.push({ typeId, typeName, quantity, unitPrice, totalCost });
+    renderCart();
+
+    // تصفير حقول "إضافة بند" عشان تضيف بند تاني على طول
+    logType.selectedIndex = 0;
+    logQuantity.value = '';
+    logCustomPrice.value = '';
+    priceDisplaySection.classList.add('hidden');
+    customPriceSection.classList.add('hidden');
+    itemTotalDisplay.classList.add('hidden');
+}
+
+function removeCartItem(index) {
+    cart.splice(index, 1);
+    renderCart();
+}
+window.removeCartItem = removeCartItem; // مستخدمة في onclick جوه الـ HTML المتولد ديناميكيًا
+
+function renderCart() {
+    if (cart.length === 0) {
+        cartList.innerHTML = '<p class="text-center text-gray-400 text-sm py-4">لسه مفيش بنود مضافة</p>';
+        cartCount.textContent = '0 بند';
+        cartGrandTotal.classList.add('hidden');
+        return;
+    }
+
+    cartCount.textContent = `${cart.length} بند`;
+    cartList.innerHTML = cart.map((item, i) => `
+        <div class="flex justify-between items-center py-2 ${i > 0 ? 'border-t border-gray-100' : ''}">
+            <div>
+                <span class="type-badge badge-daily">${item.typeName}</span>
+                <span class="text-sm text-gray-600 mr-2">× ${item.quantity}</span>
+            </div>
+            <div class="flex items-center gap-3">
+                <span class="font-bold text-indigo-600 text-sm">${formatCurrency(item.totalCost)}</span>
+                <button type="button" onclick="removeCartItem(${i})" class="text-red-500 text-lg leading-none">✖</button>
+            </div>
+        </div>
+    `).join('');
+
+    const grandTotal = cart.reduce((s, i) => s + i.totalCost, 0);
+    cartGrandTotal.classList.remove('hidden');
+    cartGrandTotalValue.textContent = formatCurrency(grandTotal);
+}
+
+async function handleSubmitBatch() {
     const date = logDate.value;
     const project = logProject.value;
     const phase = logPhase.value;
-    const typeId = logType.value;
-    const quantity = parseFloat(logQuantity.value) || 0;
     const notes = logNotes.value.trim();
-    const totalCost = parseFloat(logTotalCost.value) || 0;
 
-    const selectedOption = logType.options[logType.selectedIndex];
-    const allowCustom = selectedOption?.dataset.custom === 'true';
-    const unitPrice = allowCustom
-        ? (parseFloat(logCustomPrice.value) || 0)
-        : (parseFloat(logUnitPrice.value) || 0);
-
-    if (!date || !project || !phase || !typeId) {
-        showMessage('يرجى ملء جميع الحقول المطلوبة');
+    if (!date || !project || !phase) {
+        showMessage('يرجى اختيار التاريخ والمشروع والمرحلة');
         return;
     }
-    if (quantity <= 0) {
-        showMessage('الكمية يجب أن تكون أكبر من صفر');
-        return;
-    }
-    if (allowCustom && unitPrice <= 0) {
-        showMessage('يرجى إدخال السعر للمقطوعية');
+    if (cart.length === 0) {
+        showMessage('أضف بند واحد على الأقل قبل الحفظ');
         return;
     }
 
-    const typeInfo = DAILY_LOG_TYPES.find(t => t.id === typeId);
-    const typeName = typeInfo?.name || typeId;
-
-    if (!confirm(`تسجيل ${quantity} ${typeName} بـ ${formatCurrency(unitPrice)} للوحدة؟\nالإجمالي: ${formatCurrency(totalCost)}`)) return;
+    const grandTotal = cart.reduce((s, i) => s + i.totalCost, 0);
+    const summary = cart.map(i => `${i.typeName} × ${i.quantity}`).join('، ');
+    if (!confirm(`تسجيل: ${summary}\nالإجمالي: ${formatCurrency(grandTotal)}؟`)) return;
 
     try {
         submitBtn.disabled = true;
         submitBtn.textContent = 'جاري الحفظ...';
 
         await logDailyLog({
-            date,
-            project,
-            phase,
-            typeId,
-            typeName,
-            quantity,
-            unitPrice,
-            totalCost,
-            notes,
-            supervisor: currentUsername
+            date, project, phase, notes,
+            supervisor: currentUsername,
+            items: cart
         });
 
-        showMessage('✅ تم تسجيل اليومية بنجاح');
-        
-        // إعادة تعيين حقول اليومية فقط (مع الاحتفاظ بالمشروع والمرحلة)
-        resetDailyLogFields();
-        
+        showMessage('✅ تم تسجيل اليوميات بنجاح');
+        cart = [];
+        renderCart();
+        logNotes.value = '';
+
         setTimeout(() => hideMessage(), 1200);
         await loadRecentLogs();
     } catch (err) {
@@ -210,67 +235,47 @@ async function handleSubmit(e) {
         showMessage('❌ فشل الحفظ: ' + err.message);
     } finally {
         submitBtn.disabled = false;
-        submitBtn.textContent = 'تسجيل اليومية';
+        submitBtn.textContent = '✅ حفظ كل اليوميات';
     }
-}
-
-function resetDailyLogFields() {
-    // إعادة تعيين نوع اليومية للاختيار الأول
-    logType.selectedIndex = 0;
-    
-    // إخفاء كل أقسام السعر والإجمالي (جاهز لإضافة يومية جديدة)
-    priceDisplaySection.classList.add('hidden');
-    customPriceSection.classList.add('hidden');
-    totalCostDisplay.classList.add('hidden');
-    
-    // تصفير الكمية والملاحظات والقيم المخفية
-    logQuantity.value = '';
-    logNotes.value = '';
-    logUnitPrice.value = '0';
-    logTotalCost.value = '0';
-    logCustomPrice.value = '';
 }
 
 async function loadRecentLogs() {
     try {
         const logs = await getDailyLogs(currentUsername);
-        const recent = logs.slice(0, 10);
 
-        if (recent.length === 0) {
+        if (!logs || logs.length === 0) {
             recentLogs.innerHTML = '<p class="text-center text-gray-500 text-sm">لا توجد يوميات مسجلة بعد</p>';
             return;
         }
 
-        recentLogs.innerHTML = `
-            <div class="overflow-x-auto">
-                <table class="report-table">
-                    <thead>
-                        <tr>
-                            <th>التاريخ</th>
-                            <th>المشروع</th>
-                            <th>المرحلة</th>
-                            <th>النوع</th>
-                            <th>الكمية</th>
-                            <th>سعر الوحدة</th>
-                            <th>الإجمالي</th>
-                        </tr>
-                    </thead>
-                    <tbody>
-                        ${recent.map(l => `
-                            <tr>
-                                <td class="whitespace-nowrap">${formatDate(l.date)}</td>
-                                <td>${l.project}</td>
-                                <td>${l.phase}</td>
-                                <td><span class="type-badge badge-daily">${l.typeName}</span></td>
-                                <td class="text-center">${l.quantity}</td>
-                                <td class="text-center">${formatCurrency(l.unitPrice)}</td>
-                                <td class="font-bold text-indigo-600">${formatCurrency(l.totalCost)}</td>
-                            </tr>
-                        `).join('')}
-                    </tbody>
-                </table>
-            </div>
-        `;
+        // تجميع البنود حسب معرف الدفعة عشان كل تسجيل يظهر سوا (بند/بندين/تلاتة..)
+        const batches = [];
+        const batchIndex = {};
+        logs.forEach(l => {
+            const key = l.batchId || l.id; // سجلات قديمة من قبل التحديث ده مالهاش batchId فكل سطر بيتعامل كدفعة لوحده
+            if (!batchIndex[key]) {
+                batchIndex[key] = { date: l.date, project: l.project, phase: l.phase, items: [] };
+                batches.push(batchIndex[key]);
+            }
+            batchIndex[key].items.push(l);
+        });
+
+        const recentBatches = batches.slice(0, 10);
+
+        recentLogs.innerHTML = recentBatches.map(b => {
+            const batchTotal = b.items.reduce((s, i) => s + (Number(i.totalCost) || 0), 0);
+            return `
+                <div class="p-4 mb-3 rounded-xl" style="border:1px solid rgba(30,60,114,0.12); background:rgba(255,255,255,0.6);">
+                    <div class="flex justify-between items-center mb-2">
+                        <span class="text-sm font-bold text-indigo-900">${formatDate(b.date)} — ${b.project} / ${b.phase}</span>
+                        <span class="font-bold text-indigo-600 text-sm">${formatCurrency(batchTotal)}</span>
+                    </div>
+                    <div class="flex flex-wrap gap-2">
+                        ${b.items.map(i => `<span class="type-badge badge-daily">${i.typeName} × ${i.quantity}</span>`).join('')}
+                    </div>
+                </div>
+            `;
+        }).join('');
     } catch (err) {
         console.error(err);
         recentLogs.innerHTML = '<p class="text-center text-red-500 text-sm">فشل تحميل السجل</p>';
