@@ -120,8 +120,15 @@ function getNormalizedHeaders(sheet) {
 }
 
 function jsonResponse(obj) {
+  // ContentService مع MIME type JSON - Apps Script بيضيف CORS headers تلقائي لـ "Anyone" access
   return ContentService.createTextOutput(JSON.stringify(obj))
     .setMimeType(ContentService.MimeType.JSON);
+}
+
+function doOptions(e) {
+  // للـ CORS preflight requests
+  return ContentService.createTextOutput('')
+    .setMimeType(ContentService.MimeType.TEXT);
 }
 
 // ── إنشاء الشيتات المطلوبة ─────────────────────────
@@ -257,7 +264,18 @@ function doGet(e) {
   }
 }
 
+// دالة لمعالجة طلبات OPTIONS (CORS preflight)
+function doOptions(e) {
+  return ContentService.createTextOutput('')
+    .setMimeType(ContentService.MimeType.TEXT);
+}
+
 function doPost(e) {
+  // Handle CORS preflight
+  if (e && e.postData && e.postData.type === 'options') {
+    return jsonResponse({ ok: true });
+  }
+  
   try {
     const body = JSON.parse(e.postData.contents);
     const action = body.action;
@@ -569,6 +587,11 @@ function handleDepositAdvance(params) {
 }
 
 function handleRegisterUser(body) {
+  // حماية لو الجسم فاضي أو مش JSON
+  if (!body || typeof body !== 'object') {
+    return jsonResponse({ ok: false, error: 'بيانات الطلب فاضية أو غير صالحة: ' + JSON.stringify(body) });
+  }
+  
   const sheet = getOrCreateUsersSheet();
   const role = String(body.username || '').toLowerCase() === 'admin' ? 'admin' : 'supervisor';
   // المشاريع المخصصة: فاضية للإنشاء الجديد (الأدمن يقدر يحددها لاحقاً)
