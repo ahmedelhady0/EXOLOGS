@@ -3,7 +3,7 @@
 // ═══════════════════════════════════════════════════════════
 import { auth, showMessage, hideMessage, todayStr, formatDate, formatCurrency } from './firebase-config.js';
 import { onAuthStateChanged } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
-import { getUserRole, getSetupData, getUsers, getAdvanceMovements, logAdvanceExpense, depositAdvance, updateUserProjects } from './sheets-service.js';
+import { getUserRole, getSetupData, getUsers, getAdvanceMovements, logAdvanceExpense, depositAdvance, updateUserProjects, addPhase, addDailyLogPrice } from './sheets-service.js';
 
 const adminSection = document.getElementById('adminSection');
 const summarySection = document.getElementById('summarySection');
@@ -27,6 +27,8 @@ let currentUsername = null;
 let isAdmin = false;
 let assignedProjects = []; // مشاريع المشرف الحالي (فاضية = بيشوف الكل)
 let projects = [];
+let phasesList = [];
+let typesList = [];
 let allMovements = [];
 let allUsers = [];
 
@@ -53,6 +55,8 @@ onAuthStateChanged(auth, async (user) => {
             renderProjectAssignBox();
         });
         saveProjectsBtn?.addEventListener('click', handleSaveProjects);
+        document.getElementById('addPhaseForm')?.addEventListener('submit', handleAddPhaseSubmit);
+        document.getElementById('addTypeForm')?.addEventListener('submit', handleAddTypeSubmit);
     } else {
         adminSection.classList.add('hidden');
         await loadMovements();
@@ -111,6 +115,42 @@ function renderProjectAssignBox() {
     saveProjectsBtn?.classList.remove('hidden');
 }
 
+async function handleAddPhaseSubmit(e) {
+    e.preventDefault();
+    const input = document.getElementById('newPhaseName');
+    const name = input.value.trim();
+    if (!name) return;
+    try {
+        await addPhase(name, currentEmail);
+        showMessage('✅ تم إضافة المرحلة');
+        input.value = '';
+        setTimeout(() => hideMessage(), 1200);
+        await loadProjects(); // بيعيد تحميل المراحل كمان (نفس getSetupData)
+    } catch (err) {
+        showMessage('❌ فشل الحفظ: ' + err.message);
+    }
+}
+
+async function handleAddTypeSubmit(e) {
+    e.preventDefault();
+    const typeId = document.getElementById('newTypeId').value.trim();
+    const name = document.getElementById('newTypeName').value.trim();
+    const price = document.getElementById('newTypePrice').value;
+    const allowCustom = document.getElementById('newTypeCustom').checked;
+
+    if (!typeId || !name) { showMessage('⚠️ أدخل المعرف والاسم'); return; }
+
+    try {
+        await addDailyLogPrice(typeId, Number(price) || 0, currentEmail, name, allowCustom);
+        showMessage('✅ تم حفظ نوع اليومية');
+        document.getElementById('addTypeForm').reset();
+        setTimeout(() => hideMessage(), 1200);
+        await loadProjects(); // بيعيد تحميل الأنواع كمان (نفس getSetupData)
+    } catch (err) {
+        showMessage('❌ فشل الحفظ: ' + err.message);
+    }
+}
+
 async function handleSaveProjects() {
     const username = supervisorSelect.value;
     if (!username) return;
@@ -133,6 +173,8 @@ async function loadProjects() {
     try {
         const data = await getSetupData();
         projects = data.projects || []; // القائمة الكاملة — الأدمن محتاجها كاملة لتعيين المشاريع للمشرفين
+        phasesList = data.phases || [];
+        typesList = data.dailyLogTypes || [];
 
         // لو المشرف معاه مشاريع مخصصة، دروب داونز الصرف والفلترة بتاعته يبقوا مقصورين عليها بس
         const visibleProjects = (!isAdmin && assignedProjects.length > 0)
@@ -143,9 +185,26 @@ async function loadProjects() {
             visibleProjects.map(p => `<option value="${p}">${p}</option>`).join('');
         expenseProject.innerHTML = options;
         filterProject.innerHTML = '<option value="">الكل</option>' + options;
+
+        renderPhasesList();
+        renderTypesList();
     } catch (err) {
         console.error(err);
     }
+}
+
+function renderPhasesList() {
+    const box = document.getElementById('phasesListBox');
+    if (!box) return;
+    box.textContent = phasesList.length ? 'المراحل الحالية: ' + phasesList.join('، ') : '';
+}
+
+function renderTypesList() {
+    const box = document.getElementById('typesListBox');
+    if (!box) return;
+    box.textContent = typesList.length
+        ? 'الأنواع الحالية: ' + typesList.map(t => `${t.name} (${t.defaultPrice} ر.س)`).join('، ')
+        : '';
 }
 
 async function loadMovements() {

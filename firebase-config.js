@@ -25,22 +25,6 @@ export const appId = 'exo-system';
 export const adminUsername = "admin";
 
 // ═══════════════════════════════════════════════════════════
-// أنواع اليوميات مع أسعارها (تجيب من الشيت أوتوماتيك)
-// ═══════════════════════════════════════════════════════════
-export const DAILY_LOG_TYPES = [
-    { id: 'carpenter', name: 'نجار', defaultPrice: 200, allowCustomPrice: false },
-    { id: 'electrician', name: 'كهربائي', defaultPrice: 180, allowCustomPrice: false },
-    { id: 'plumber', name: 'سباك', defaultPrice: 190, allowCustomPrice: false },
-    { id: 'painter', name: 'دهان', defaultPrice: 170, allowCustomPrice: false },
-    { id: 'mason', name: 'بناء', defaultPrice: 210, allowCustomPrice: false },
-    { id: 'helper', name: 'مساعد', defaultPrice: 120, allowCustomPrice: false },
-    { id: 'lump_sum', name: 'مقطوعية', defaultPrice: 0, allowCustomPrice: true }
-];
-
-// المراحل الثابتة
-export const PHASES = ["فوم", "رولات", "أسمنتي", "دورات مياه"];
-
-// ═══════════════════════════════════════════════════════════
 // دوال مساعدة مشتركة
 // ═══════════════════════════════════════════════════════════
 export function showMessage(text) {

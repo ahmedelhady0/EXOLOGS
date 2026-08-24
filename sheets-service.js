@@ -3,7 +3,7 @@
 // ═══════════════════════════════════════════════════════════
 
 // ⚠️ غيّر هذا الرابط لرابط Web App الخاص بك بعد نشر Code.gs
-const WEB_APP_URL = "https://script.google.com/macros/s/AKfycbwM3v8UioGSsOjFMqFU5lPyufahE9bTFcJWIdX3RyPXe4NIklC4MWH_VjUQG9IQGcJj4Q/exec";
+const WEB_APP_URL = "https://script.google.com/macros/s/YOUR_WEB_APP_ID/exec";
 
 async function callGet(params) {
     const url = new URL(WEB_APP_URL);
@@ -115,8 +115,17 @@ export async function addProject(name, requesterEmail) {
     return r;
 }
 
-export async function addDailyLogPrice(typeId, price, requesterEmail) {
-    const r = await callPost({ action: 'addDailyLogPrice', typeId, price, requesterEmail });
+export async function addPhase(name, requesterEmail) {
+    const r = await callPost({ action: 'addPhase', name, requesterEmail });
+    bustCache('cache_setup_exo');
+    return r;
+}
+
+export async function addDailyLogPrice(typeId, price, requesterEmail, name = null, allowCustomPrice = null) {
+    const body = { action: 'addDailyLogPrice', typeId, price, requesterEmail };
+    if (name !== null) body.name = name;
+    if (allowCustomPrice !== null) body.allowCustomPrice = allowCustomPrice;
+    const r = await callPost(body);
     bustCache('cache_setup_exo');
     return r;
 }

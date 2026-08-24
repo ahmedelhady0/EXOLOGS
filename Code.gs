@@ -12,11 +12,12 @@ const SHEET_NAMES = {
   users: 'Users',
   dailyLogs: 'سجل اليوميات',
   dailyLogPrices: 'أسعار اليوميات',
+  phases: 'المراحل',
   advanceMovements: 'سجل حركات العهدة'
 };
 
-// المراحل الثابتة
-const PROJECT_PHASES = ['فوم', 'رولات', 'أسمنتي', 'دورات مياه'];
+// قيم بداية فقط (seed) — بعد كده المراحل الفعلية بتتقرا من شيت "المراحل" وتتعدل من غير ما تلمس الكود
+const DEFAULT_PHASES = ['فوم', 'رولات', 'أسمنتي', 'دورات مياه'];
 
 // أنواع اليوميات الافتراضية مع أسعارها
 const DEFAULT_DAILY_LOG_TYPES = [
@@ -141,7 +142,9 @@ function getOrCreateDailyLogsSheet() {
   let sheet = ss.getSheetByName(SHEET_NAMES.dailyLogs);
   if (!sheet) {
     sheet = ss.insertSheet(SHEET_NAMES.dailyLogs);
-    sheet.appendRow(['ID', 'التاريخ', 'المشروع', 'المرحلة', 'نوع اليومية', 'اسم النوع', 'الكمية', 'سعر الوحدة', 'الإجمالي', 'ملاحظات', 'المشرف', 'تاريخ التسجيل']);
+    sheet.appendRow(['ID', 'التاريخ', 'المشروع', 'المرحلة', 'نوع اليومية', 'اسم النوع', 'الكمية', 'سعر الوحدة', 'الإجمالي', 'ملاحظات', 'المشرف', 'تاريخ التسجيل', 'معرف الدفعة']);
+  } else {
+    ensureColumn_(sheet, 'معرف الدفعة'); // ترقية تلقائية — بتتضاف آخر عمود فلازم تتبعت آخر قيمة في الصف دايمًا
   }
   return sheet;
 }
@@ -158,6 +161,42 @@ function getOrCreateDailyLogPricesSheet() {
     });
   }
   return sheet;
+}
+
+function getOrCreatePhasesSheet() {
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  let sheet = ss.getSheetByName(SHEET_NAMES.phases);
+  if (!sheet) {
+    sheet = ss.insertSheet(SHEET_NAMES.phases);
+    sheet.appendRow(['اسم المرحلة']);
+    DEFAULT_PHASES.forEach(p => sheet.appendRow([p]));
+  }
+  return sheet;
+}
+
+function getPhasesList_() {
+  try {
+    const list = sheetToObjects(getOrCreatePhasesSheet())
+      .map(r => String(r['اسم المرحلة'] || '').trim())
+      .filter(Boolean);
+    return list.length ? list : DEFAULT_PHASES;
+  } catch (err) {
+    return DEFAULT_PHASES;
+  }
+}
+
+function getDailyLogTypesList_() {
+  try {
+    const list = sheetToObjects(getOrCreateDailyLogPricesSheet()).map(row => ({
+      id: String(row['النوع'] || '').trim(),
+      name: String(row['الاسم'] || '').trim(),
+      defaultPrice: parseFloat(row['السعر الافتراضي']) || 0,
+      allowCustomPrice: String(row['يسمح بسعر مخصص']).toLowerCase() === 'true' || row['يسمح بسعر مخصص'] === true
+    })).filter(t => t.id);
+    return list.length ? list : DEFAULT_DAILY_LOG_TYPES;
+  } catch (err) {
+    return DEFAULT_DAILY_LOG_TYPES;
+  }
 }
 
 function getOrCreateAdvanceSheet() {
@@ -229,6 +268,7 @@ function doPost(e) {
     if (action === 'depositAdvance') return handleDepositAdvance(body);
     if (action === 'registerUser') return handleRegisterUser(body);
     if (action === 'addProject') return handleAddProject(body);
+    if (action === 'addPhase') return handleAddPhase(body);
     if (action === 'addDailyLogPrice') return handleAddDailyLogPrice(body);
     if (action === 'updateUserProjects') return handleUpdateUserProjects(body);
 
@@ -251,7 +291,7 @@ function handleGetSetupData(e) {
   const cached = cache.get(cacheKey);
   if (cached) return jsonResponse(JSON.parse(cached));
 
-  let projects = [], projectDates = {}, materials = [], suppliers = [], dailyLogPrices = {};
+  let projects = [], projectDates = {}, materials = [], suppliers = [], dailyLogPrices = {}, phases = [], dailyLogTypes = [];
 
   try {
     const projData = sheetToObjects(getOrCreateProjectsSheet());
@@ -280,18 +320,18 @@ function handleGetSetupData(e) {
       .map(s => String(s['اسم المورد'] || '').trim()).filter(Boolean);
   } catch (err) { console.log('Suppliers Error:', err.message); }
 
-  // أسعار اليوميات
+  // أسعار اليوميات (خريطة للتوافق القديم) + قائمة الأنواع الكاملة (المصدر الفعلي للفورم دلوقتي)
   try {
-    const priceData = sheetToObjects(getOrCreateDailyLogPricesSheet());
-    priceData.forEach(row => {
-      const typeId = String(row['النوع'] || '').trim();
-      if (typeId) {
-        dailyLogPrices[typeId] = parseFloat(row['السعر الافتراضي']) || 0;
-      }
-    });
+    dailyLogTypes = getDailyLogTypesList_();
+    dailyLogTypes.forEach(t => { dailyLogPrices[t.id] = t.defaultPrice; });
   } catch (err) { console.log('DailyLogPrices Error:', err.message); }
 
-  const result = { projects, projectDates, materials, suppliers, dailyLogPrices };
+  // المراحل — بتتقرا من شيت "المراحل" فتقدر تضيف/تعدّل من غير ما تلمس الكود
+  try {
+    phases = getPhasesList_();
+  } catch (err) { console.log('Phases Error:', err.message); }
+
+  const result = { projects, projectDates, materials, suppliers, dailyLogPrices, dailyLogTypes, phases };
   cache.put(cacheKey, JSON.stringify(result), 30);
   return jsonResponse(result);
 }
@@ -352,7 +392,23 @@ function handleGetDailyLogs(e) {
       String(l['المشرف'] || '').trim().toLowerCase() === username
     );
   }
-  return jsonResponse({ logs });
+
+  return jsonResponse({
+    logs: logs.map(l => ({
+      id: l['ID'],
+      batchId: l['معرف الدفعة'],
+      date: l['التاريخ'],
+      project: l['المشروع'],
+      phase: l['المرحلة'],
+      typeId: l['نوع اليومية'],
+      typeName: l['اسم النوع'],
+      quantity: l['الكمية'],
+      unitPrice: l['سعر الوحدة'],
+      totalCost: l['الإجمالي'],
+      notes: l['ملاحظات'],
+      supervisor: l['المشرف']
+    }))
+  });
 }
 
 function handleGetAdvanceMovements(e) {
@@ -385,25 +441,39 @@ function handleGetAdvanceMovements(e) {
 function handleLogDailyLog(body) {
   try {
     assertProjectAllowed_(body.supervisor, body.project);
-    const id = 'DL-' + Utilities.formatDate(new Date(), Session.getScriptTimeZone(), 'yyyyMMdd-HHmmss') + '-' + Math.floor(Math.random()*1000);
-    const sheet = getOrCreateDailyLogsSheet();
 
-    sheet.appendRow([
-      id,
-      body.date || new Date(),
+    const items = Array.isArray(body.items) && body.items.length
+      ? body.items
+      : [{ typeId: body.typeId, typeName: body.typeName, quantity: body.quantity, unitPrice: body.unitPrice, totalCost: body.totalCost }];
+
+    if (!items.length || !items[0].typeId) {
+      return jsonResponse({ ok: false, error: 'أضف بند واحد على الأقل' });
+    }
+
+    const now = new Date();
+    const stamp = Utilities.formatDate(now, Session.getScriptTimeZone(), 'yyyyMMdd-HHmmss');
+    const batchId = 'BATCH-' + stamp + '-' + Math.floor(Math.random() * 1000);
+
+    const rows = items.map((item, idx) => ([
+      'DL-' + stamp + '-' + idx + '-' + Math.floor(Math.random() * 1000),
+      body.date || now,
       body.project || '',
       body.phase || '',
-      body.typeId || '',
-      body.typeName || '',
-      parseFloat(body.quantity) || 0,
-      parseFloat(body.unitPrice) || 0,
-      parseFloat(body.totalCost) || 0,
+      item.typeId || '',
+      item.typeName || '',
+      parseFloat(item.quantity) || 0,
+      parseFloat(item.unitPrice) || 0,
+      parseFloat(item.totalCost) || 0,
       body.notes || '',
       body.supervisor || '',
-      new Date()
-    ]);
+      now,
+      batchId
+    ]));
 
-    return jsonResponse({ ok: true, id });
+    const sheet = getOrCreateDailyLogsSheet();
+    sheet.getRange(sheet.getLastRow() + 1, 1, rows.length, rows[0].length).setValues(rows);
+
+    return jsonResponse({ ok: true, batchId, count: rows.length });
   } catch (err) {
     return jsonResponse({ ok: false, error: 'خطأ: ' + err.message });
   }
@@ -503,11 +573,27 @@ function handleAddProject(body) {
   const name = String((body && body.name) || '').trim();
   if (!name) return jsonResponse({ ok: false, error: 'اسم المشروع مطلوب' });
   const sheet = getOrCreateProjectsSheet();
-  PROJECT_PHASES.forEach(phase => {
+  const phasesList = getPhasesList_();
+  phasesList.forEach(phase => {
     sheet.appendRow([name, phase, 'شغالة', '', '', '', '', '', new Date()]);
   });
   CacheService.getScriptCache().remove('setupData_exo_v1');
-  return jsonResponse({ ok: true, phases: PROJECT_PHASES.length });
+  return jsonResponse({ ok: true, phases: phasesList.length });
+}
+
+function handleAddPhase(body) {
+  requireAdmin_(body && body.requesterEmail);
+  const name = String((body && body.name) || '').trim();
+  if (!name) return jsonResponse({ ok: false, error: 'اسم المرحلة مطلوب' });
+
+  const existing = getPhasesList_();
+  if (existing.indexOf(name) !== -1) {
+    return jsonResponse({ ok: false, error: 'المرحلة موجودة بالفعل' });
+  }
+
+  getOrCreatePhasesSheet().appendRow([name]);
+  CacheService.getScriptCache().remove('setupData_exo_v1');
+  return jsonResponse({ ok: true });
 }
 
 function handleAddDailyLogPrice(body) {
@@ -519,23 +605,28 @@ function handleAddDailyLogPrice(body) {
   const sheet = getOrCreateDailyLogPricesSheet();
   const data = sheetToObjects(sheet);
   const headers = getNormalizedHeaders(sheet);
-  const typeCol = headers.indexOf('النوع');
   const priceCol = headers.indexOf('السعر الافتراضي');
+  const nameCol = headers.indexOf('الاسم');
+  const customCol = headers.indexOf('يسمح بسعر مخصص');
 
-  // البحث عن الصف وتحديثه
+  // البحث عن الصف وتحديثه (لو النوع موجود بالفعل)
   for (let i = 0; i < data.length; i++) {
     if (String(data[i]['النوع'] || '').trim() === typeId) {
       const rowNum = i + 2 + getHeaderRowIndex(sheet); // +2 لأن الفهرس يبدأ من 0 والرأس في الصف 1
       sheet.getRange(rowNum, priceCol + 1).setValue(price);
+      if (body && body.name) sheet.getRange(rowNum, nameCol + 1).setValue(String(body.name).trim());
+      if (body && typeof body.allowCustomPrice !== 'undefined') {
+        sheet.getRange(rowNum, customCol + 1).setValue(!!body.allowCustomPrice);
+      }
       CacheService.getScriptCache().remove('setupData_exo_v1');
       return jsonResponse({ ok: true });
     }
   }
 
-  // لو مش لاقيه، أضفه جديد
-  const typeInfo = DEFAULT_DAILY_LOG_TYPES.find(t => t.id === typeId);
-  const name = typeInfo ? typeInfo.name : typeId;
-  sheet.appendRow([typeId, name, price, false]);
+  // لو مش لاقيه، أضفه كنوع يومية جديد بالكامل (زي "حداد" مثلاً)
+  const name = String((body && body.name) || '').trim() || typeId;
+  const allowCustomPrice = !!(body && body.allowCustomPrice);
+  sheet.appendRow([typeId, name, price, allowCustomPrice]);
   CacheService.getScriptCache().remove('setupData_exo_v1');
   return jsonResponse({ ok: true });
 }
@@ -551,6 +642,7 @@ function initializeSheets() {
   getOrCreateUsersSheet();
   getOrCreateDailyLogsSheet();
   getOrCreateDailyLogPricesSheet();
+  getOrCreatePhasesSheet();
   getOrCreateAdvanceSheet();
   getOrCreateProjectsSheet();
   getOrCreateMaterialsSheet();
