@@ -28,6 +28,8 @@ const cartGrandTotalValue = document.getElementById('cartGrandTotalValue');
 const recentLogs = document.getElementById('recentLogs');
 const submitBtn = document.getElementById('submitBtn');
 const closeMessageBtn = document.getElementById('closeMessageBtn');
+const noProjectsWarning = document.getElementById('noProjectsWarning');
+const loggingFormSections = document.getElementById('loggingFormSections');
 
 closeMessageBtn?.addEventListener('click', hideMessage);
 
@@ -53,12 +55,15 @@ onAuthStateChanged(auth, async (user) => {
         getDailyLogs(currentUsername).catch(err => { console.error(err); return []; })
     ]);
 
+    let roleLoadFailed = false;
     if (roleInfo) {
         isAdmin = roleInfo.role === 'admin';
         assignedProjects = roleInfo.projects || [];
+    } else {
+        roleLoadFailed = true;
     }
 
-    if (setupData) applySetupData(setupData);
+    if (setupData) applySetupData(setupData, roleLoadFailed);
     renderRecentLogs(logsData || []);
 
     logProject.addEventListener('change', updatePhaseOptions);
@@ -69,15 +74,25 @@ onAuthStateChanged(auth, async (user) => {
     submitBtn.addEventListener('click', handleSubmitBatch);
 });
 
-function applySetupData(data) {
+function applySetupData(data, roleLoadFailed) {
     projects = data.projects || [];
     dailyLogTypes = data.dailyLogTypes || [];
     projectPhases = data.projectPhases || {};
 
-    // لو المشرف معاه مشاريع مخصصة، يشوفها بس — غير كده يشوف كل المشاريع (زي الأدمن)
-    const visibleProjects = (!isAdmin && assignedProjects.length > 0)
-        ? projects.filter(p => assignedProjects.includes(p))
-        : projects;
+    // الأدمن يشوف كل المشاريع. المشرف يشوف بس المشاريع المكتوبة له في عمود "المشاريع المخصصة"
+    // في شيت Users — لو العمود فاضي، معناه ملوش مشاريع لسه (مش إنه يشوف الكل)
+    const visibleProjects = isAdmin ? projects : projects.filter(p => assignedProjects.includes(p));
+
+    if (!isAdmin && visibleProjects.length === 0) {
+        noProjectsWarning.textContent = roleLoadFailed
+            ? '⚠️ تعذر تحميل صلاحياتك، حدّث الصفحة أو تواصل مع الأدمن.'
+            : '⚠️ لا يوجد أي مشاريع مخصصة لك حاليًا. تواصل مع الأدمن لتفعيل مشروع لك.';
+        noProjectsWarning.classList.remove('hidden');
+        loggingFormSections.classList.add('hidden');
+        return;
+    }
+    noProjectsWarning.classList.add('hidden');
+    loggingFormSections.classList.remove('hidden');
 
     logProject.innerHTML = '<option value="" disabled selected>اختر المشروع</option>' +
         visibleProjects.map(p => `<option value="${p}">${p}</option>`).join('');

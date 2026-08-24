@@ -112,7 +112,7 @@ function renderProjectAssignBox() {
                 </label>
             `).join('')}
         </div>
-        <p class="text-xs text-gray-400 mt-2">${assigned.size === 0 ? '⚠️ مفيش تقييد حاليًا — المشرف ده بيشوف كل المشاريع' : ''}</p>
+        <p class="text-xs text-gray-400 mt-2">${assigned.size === 0 ? '⚠️ مفيش مشاريع محددة — المشرف ده مش هيشوف أي مشروع لحد ما تحدد له واحد على الأقل' : ''}</p>
     `;
     saveProjectsBtn?.classList.remove('hidden');
 }
@@ -182,10 +182,9 @@ async function loadProjects() {
         projectPhases = data.projectPhases || {};
         typesList = data.dailyLogTypes || [];
 
-        // لو المشرف معاه مشاريع مخصصة، دروب داونز الصرف والفلترة بتاعته يبقوا مقصورين عليها بس
-        const visibleProjects = (!isAdmin && assignedProjects.length > 0)
-            ? projects.filter(p => assignedProjects.includes(p))
-            : projects;
+        // الأدمن يشوف كل المشاريع. المشرف يشوف بس المشاريع المكتوبة له في "المشاريع المخصصة"
+        // (فاضي = مفيش مشاريع لسه، مش "كل المشاريع") — يقدر برضه يسجل صرف "بدون مشروع"
+        const visibleProjects = isAdmin ? projects : projects.filter(p => assignedProjects.includes(p));
 
         const options = '<option value="">بدون مشروع</option>' +
             visibleProjects.map(p => `<option value="${p}">${p}</option>`).join('');

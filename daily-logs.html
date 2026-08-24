@@ -13,6 +13,11 @@
 
         <h1 class="text-2xl font-bold text-center mb-6" style="color:#1e3c72;">📝 تسجيل اليوميات</h1>
 
+        <div id="noProjectsWarning" class="hidden mb-5 p-4 rounded-xl text-sm font-bold text-white text-center" style="background:linear-gradient(135deg,#f43f5e,#dc2626);">
+            ⚠️ لا يوجد أي مشاريع مخصصة لك حاليًا. تواصل مع الأدمن لتفعيل مشروع لك.
+        </div>
+
+        <div id="loggingFormSections">
         <!-- بيانات مشتركة لكل بنود التسجيل ده -->
         <div class="section-card p-6 space-y-5">
             <div>
@@ -91,6 +96,7 @@
         <button type="button" id="submitBtn" class="btn-primary w-full py-4 px-6 text-lg font-bold mt-4">
             ✅ حفظ كل اليوميات
         </button>
+        </div>
 
         <!-- سجل اليوميات الأخيرة -->
         <div class="section-card p-6 mt-6">
