@@ -99,7 +99,9 @@ async function signUp() {
                 requesterEmail: email
             });
         } catch (sheetErr) {
-            console.warn('فشل الحفظ في Sheets:', sheetErr);
+            console.error('فشل الحفظ في Sheets:', sheetErr);
+            showMessage('⚠️ تم إنشاء الحساب لكن فشل الحفظ في Sheets: ' + sheetErr.message);
+            return;
         }
 
         showMessage('تم إنشاء الحساب! يمكنك تسجيل الدخول الآن');

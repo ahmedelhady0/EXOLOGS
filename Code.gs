@@ -571,7 +571,8 @@ function handleDepositAdvance(params) {
 function handleRegisterUser(body) {
   const sheet = getOrCreateUsersSheet();
   const role = String(body.username || '').toLowerCase() === 'admin' ? 'admin' : 'supervisor';
-  sheet.appendRow([body.uid || '', body.username || '', body.email || '', role, new Date(), 'نشط']);
+  // المشاريع المخصصة: فاضية للإنشاء الجديد (الأدمن يقدر يحددها لاحقاً)
+  sheet.appendRow([body.uid || '', body.username || '', body.email || '', role, new Date(), 'نشط', '']);
   return jsonResponse({ ok: true, role });
 }
 
