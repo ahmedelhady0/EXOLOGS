@@ -64,20 +64,29 @@
                 <button id="saveProjectsBtn" type="button" class="btn-primary px-5 py-2.5 font-bold mt-3 hidden">💾 حفظ المشاريع</button>
             </div>
 
-            <!-- ═══ إدارة المراحل ═══ -->
+            <!-- ═══ تفعيل مرحلة لمشروع ═══ -->
             <div class="mt-6 pt-6" style="border-top:2px dashed rgba(30,60,114,0.15);">
                 <div class="form-header mb-4">
                     <span class="form-header-icon" style="background:linear-gradient(135deg,#0891b2,#0e7490);">🏗️</span>
                     <div class="flex-1">
-                        <h2 class="font-bold text-indigo-900 text-lg">إدارة المراحل</h2>
-                        <p class="text-xs text-gray-500">أضف مرحلة جديدة تظهر في نموذج تسجيل اليوميات لكل المشاريع</p>
+                        <h2 class="font-bold text-indigo-900 text-lg">تفعيل مرحلة لمشروع</h2>
+                        <p class="text-xs text-gray-500">المرحلة تظهر للمشرف في تسجيل اليوميات بس لو حالتها "شغالة" في شيت "بيانات المشاريع" — من هنا تقدر تضيف/تفعّل مرحلة من غير ما تفتح الشيت. عشان توقف مرحلة، امسح كلمة "شغالة" من عمود الحالة في الشيت مباشرة.</p>
                     </div>
                 </div>
-                <form id="addPhaseForm" class="flex gap-2">
-                    <input type="text" id="newPhaseName" class="input-field px-3 py-2.5 flex-1" placeholder="مثال: تشطيبات" required>
-                    <button type="submit" class="btn-primary px-5 font-bold whitespace-nowrap">➕ إضافة</button>
+                <form id="addProjectPhaseForm" class="grid grid-cols-1 sm:grid-cols-3 gap-3 items-end">
+                    <div>
+                        <label class="block text-xs font-semibold text-gray-600 mb-1">المشروع</label>
+                        <select id="phaseProjectSelect" class="input-field px-3 py-2 w-full" required>
+                            <option value="" disabled selected>اختر المشروع</option>
+                        </select>
+                    </div>
+                    <div>
+                        <label class="block text-xs font-semibold text-gray-600 mb-1">اسم المرحلة</label>
+                        <input type="text" id="newProjectPhaseName" class="input-field px-3 py-2 w-full" placeholder="مثال: تشطيبات" required>
+                    </div>
+                    <button type="submit" class="btn-primary px-5 py-2.5 font-bold whitespace-nowrap">✅ تفعيل</button>
                 </form>
-                <div id="phasesListBox" class="text-xs text-gray-500 mt-2"></div>
+                <div id="currentProjectPhasesBox" class="text-xs text-gray-500 mt-2"></div>
             </div>
 
             <!-- ═══ إدارة أنواع اليوميات ═══ -->

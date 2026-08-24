@@ -142,9 +142,7 @@ function getOrCreateDailyLogsSheet() {
   let sheet = ss.getSheetByName(SHEET_NAMES.dailyLogs);
   if (!sheet) {
     sheet = ss.insertSheet(SHEET_NAMES.dailyLogs);
-    sheet.appendRow(['ID', 'التاريخ', 'المشروع', 'المرحلة', 'نوع اليومية', 'اسم النوع', 'الكمية', 'سعر الوحدة', 'الإجمالي', 'ملاحظات', 'المشرف', 'تاريخ التسجيل', 'معرف الدفعة']);
-  } else {
-    ensureColumn_(sheet, 'معرف الدفعة'); // ترقية تلقائية — بتتضاف آخر عمود فلازم تتبعت آخر قيمة في الصف دايمًا
+    sheet.appendRow(['ID', 'التاريخ', 'المشروع', 'المرحلة', 'نوع اليومية', 'اسم النوع', 'الكمية', 'سعر الوحدة', 'الإجمالي', 'ملاحظات', 'المشرف', 'تاريخ التسجيل']);
   }
   return sheet;
 }
@@ -268,6 +266,7 @@ function doPost(e) {
     if (action === 'depositAdvance') return handleDepositAdvance(body);
     if (action === 'registerUser') return handleRegisterUser(body);
     if (action === 'addProject') return handleAddProject(body);
+    if (action === 'addProjectPhase') return handleAddProjectPhase(body);
     if (action === 'addPhase') return handleAddPhase(body);
     if (action === 'addDailyLogPrice') return handleAddDailyLogPrice(body);
     if (action === 'updateUserProjects') return handleUpdateUserProjects(body);
@@ -291,19 +290,37 @@ function handleGetSetupData(e) {
   const cached = cache.get(cacheKey);
   if (cached) return jsonResponse(JSON.parse(cached));
 
-  let projects = [], projectDates = {}, materials = [], suppliers = [], dailyLogPrices = {}, phases = [], dailyLogTypes = [];
+  let projects = [], projectDates = {}, allProjects = [], projectPhases = {}, materials = [], suppliers = [], dailyLogPrices = {}, phases = [], dailyLogTypes = [];
 
   try {
     const projData = sheetToObjects(getOrCreateProjectsSheet());
     const newestDate = {};
+    const allProjectsSet = {};
+    const phasesByProject = {};
+
     projData.forEach(p => {
       const name = String(p['اسم المشروع'] || '').trim();
-      if (!name || !String(p['الحالة'] || '').trim().includes('شغال')) return;
+      const phase = String(p['المرحلة'] || '').trim();
+      const isActive = String(p['الحالة'] || '').trim().includes('شغال');
+      if (!name) return;
+
+      allProjectsSet[name] = true; // كل المشاريع (حتى لو مش شغالة) — تفيد الأدمن وقت تفعيل مرحلة
+      if (!isActive) return;
+
       const d = p['تاريخ الإضافة'] ? new Date(p['تاريخ الإضافة']) : null;
       if (d && (!newestDate[name] || d > newestDate[name])) newestDate[name] = d;
+
+      // المراحل الشغالة بس بتتضاف لكل مشروع — لو مسحت "شغالة" من الحالة، المرحلة دي بتختفي من هنا تلقائي
+      if (phase) {
+        if (!phasesByProject[name]) phasesByProject[name] = [];
+        if (phasesByProject[name].indexOf(phase) === -1) phasesByProject[name].push(phase);
+      }
     });
+
     projects = Object.keys(newestDate);
     Object.entries(newestDate).forEach(([k, v]) => { projectDates[k] = v.getTime(); });
+    allProjects = Object.keys(allProjectsSet);
+    projectPhases = phasesByProject;
   } catch (err) { console.log('Projects Error:', err.message); }
 
   try {
@@ -331,7 +348,7 @@ function handleGetSetupData(e) {
     phases = getPhasesList_();
   } catch (err) { console.log('Phases Error:', err.message); }
 
-  const result = { projects, projectDates, materials, suppliers, dailyLogPrices, dailyLogTypes, phases };
+  const result = { projects, projectDates, allProjects, projectPhases, materials, suppliers, dailyLogPrices, dailyLogTypes, phases };
   cache.put(cacheKey, JSON.stringify(result), 30);
   return jsonResponse(result);
 }
@@ -452,10 +469,10 @@ function handleLogDailyLog(body) {
 
     const now = new Date();
     const stamp = Utilities.formatDate(now, Session.getScriptTimeZone(), 'yyyyMMdd-HHmmss');
-    const batchId = 'BATCH-' + stamp + '-' + Math.floor(Math.random() * 1000);
+    const id = 'DL-' + stamp + '-' + Math.floor(Math.random() * 1000); // نفس المعرف لكل بنود التسجيل ده — عمود واحد بس
 
-    const rows = items.map((item, idx) => ([
-      'DL-' + stamp + '-' + idx + '-' + Math.floor(Math.random() * 1000),
+    const rows = items.map(item => ([
+      id,
       body.date || now,
       body.project || '',
       body.phase || '',
@@ -466,14 +483,13 @@ function handleLogDailyLog(body) {
       parseFloat(item.totalCost) || 0,
       body.notes || '',
       body.supervisor || '',
-      now,
-      batchId
+      now
     ]));
 
     const sheet = getOrCreateDailyLogsSheet();
     sheet.getRange(sheet.getLastRow() + 1, 1, rows.length, rows[0].length).setValues(rows);
 
-    return jsonResponse({ ok: true, batchId, count: rows.length });
+    return jsonResponse({ ok: true, id, count: rows.length });
   } catch (err) {
     return jsonResponse({ ok: false, error: 'خطأ: ' + err.message });
   }
@@ -574,11 +590,39 @@ function handleAddProject(body) {
   if (!name) return jsonResponse({ ok: false, error: 'اسم المشروع مطلوب' });
   const sheet = getOrCreateProjectsSheet();
   const phasesList = getPhasesList_();
+  const now = new Date();
   phasesList.forEach(phase => {
-    sheet.appendRow([name, phase, 'شغالة', '', '', '', '', '', new Date()]);
+    sheet.appendRow([name, phase, 'شغالة', now]);
   });
   CacheService.getScriptCache().remove('setupData_exo_v1');
   return jsonResponse({ ok: true, phases: phasesList.length });
+}
+
+// تفعيل مرحلة لمشروع موجود (أو إرجاعها "شغالة" لو كانت متوقفة) — ده اللي بيتحكم في ظهورها لصفحة اليوميات
+function handleAddProjectPhase(body) {
+  requireAdmin_(body && body.requesterEmail);
+  const project = String((body && body.project) || '').trim();
+  const phase = String((body && body.phase) || '').trim();
+  if (!project || !phase) return jsonResponse({ ok: false, error: 'المشروع والمرحلة مطلوبين' });
+
+  const sheet = getOrCreateProjectsSheet();
+  const data = sheetToObjects(sheet);
+  const headers = getNormalizedHeaders(sheet);
+  const statusCol = headers.indexOf('الحالة');
+
+  // لو نفس المشروع/المرحلة موجودين بالفعل بأي حالة، رجّعها "شغالة" بدل ما تتكرر
+  for (let i = 0; i < data.length; i++) {
+    if (String(data[i]['اسم المشروع'] || '').trim() === project && String(data[i]['المرحلة'] || '').trim() === phase) {
+      const rowNum = i + 2 + getHeaderRowIndex(sheet);
+      sheet.getRange(rowNum, statusCol + 1).setValue('شغالة');
+      CacheService.getScriptCache().remove('setupData_exo_v1');
+      return jsonResponse({ ok: true, reactivated: true });
+    }
+  }
+
+  sheet.appendRow([project, phase, 'شغالة', new Date()]);
+  CacheService.getScriptCache().remove('setupData_exo_v1');
+  return jsonResponse({ ok: true });
 }
 
 function handleAddPhase(body) {

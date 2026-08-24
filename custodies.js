@@ -3,7 +3,7 @@
 // ═══════════════════════════════════════════════════════════
 import { auth, showMessage, hideMessage, todayStr, formatDate, formatCurrency } from './firebase-config.js';
 import { onAuthStateChanged } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
-import { getUserRole, getSetupData, getUsers, getAdvanceMovements, logAdvanceExpense, depositAdvance, updateUserProjects, addPhase, addDailyLogPrice } from './sheets-service.js';
+import { getUserRole, getSetupData, getUsers, getAdvanceMovements, logAdvanceExpense, depositAdvance, updateUserProjects, addProjectPhase, addDailyLogPrice } from './sheets-service.js';
 
 const adminSection = document.getElementById('adminSection');
 const summarySection = document.getElementById('summarySection');
@@ -27,7 +27,8 @@ let currentUsername = null;
 let isAdmin = false;
 let assignedProjects = []; // مشاريع المشرف الحالي (فاضية = بيشوف الكل)
 let projects = [];
-let phasesList = [];
+let allProjects = [];
+let projectPhases = {};
 let typesList = [];
 let allMovements = [];
 let allUsers = [];
@@ -55,7 +56,8 @@ onAuthStateChanged(auth, async (user) => {
             renderProjectAssignBox();
         });
         saveProjectsBtn?.addEventListener('click', handleSaveProjects);
-        document.getElementById('addPhaseForm')?.addEventListener('submit', handleAddPhaseSubmit);
+        document.getElementById('addProjectPhaseForm')?.addEventListener('submit', handleAddProjectPhaseSubmit);
+        document.getElementById('phaseProjectSelect')?.addEventListener('change', renderCurrentProjectPhases);
         document.getElementById('addTypeForm')?.addEventListener('submit', handleAddTypeSubmit);
     } else {
         adminSection.classList.add('hidden');
@@ -115,17 +117,20 @@ function renderProjectAssignBox() {
     saveProjectsBtn?.classList.remove('hidden');
 }
 
-async function handleAddPhaseSubmit(e) {
+async function handleAddProjectPhaseSubmit(e) {
     e.preventDefault();
-    const input = document.getElementById('newPhaseName');
-    const name = input.value.trim();
-    if (!name) return;
+    const project = document.getElementById('phaseProjectSelect').value;
+    const input = document.getElementById('newProjectPhaseName');
+    const phase = input.value.trim();
+    if (!project) { showMessage('⚠️ اختر المشروع أولاً'); return; }
+    if (!phase) return;
     try {
-        await addPhase(name, currentEmail);
-        showMessage('✅ تم إضافة المرحلة');
+        await addProjectPhase(project, phase, currentEmail);
+        showMessage('✅ تم تفعيل المرحلة للمشروع');
         input.value = '';
         setTimeout(() => hideMessage(), 1200);
-        await loadProjects(); // بيعيد تحميل المراحل كمان (نفس getSetupData)
+        await loadProjects(); // بيعيد تحميل مراحل المشاريع كمان (نفس getSetupData)
+        renderCurrentProjectPhases();
     } catch (err) {
         showMessage('❌ فشل الحفظ: ' + err.message);
     }
@@ -172,8 +177,9 @@ async function handleSaveProjects() {
 async function loadProjects() {
     try {
         const data = await getSetupData();
-        projects = data.projects || []; // القائمة الكاملة — الأدمن محتاجها كاملة لتعيين المشاريع للمشرفين
-        phasesList = data.phases || [];
+        projects = data.projects || []; // القائمة الشغالة — الأدمن محتاجها كاملة لتعيين المشاريع للمشرفين
+        allProjects = data.allProjects || []; // كل المشاريع حتى لو متوقفة — عشان تقدر تفعّل مرحلة لمشروع قديم
+        projectPhases = data.projectPhases || {};
         typesList = data.dailyLogTypes || [];
 
         // لو المشرف معاه مشاريع مخصصة، دروب داونز الصرف والفلترة بتاعته يبقوا مقصورين عليها بس
@@ -186,17 +192,29 @@ async function loadProjects() {
         expenseProject.innerHTML = options;
         filterProject.innerHTML = '<option value="">الكل</option>' + options;
 
-        renderPhasesList();
+        const phaseProjectSelect = document.getElementById('phaseProjectSelect');
+        if (phaseProjectSelect) {
+            const selected = phaseProjectSelect.value;
+            phaseProjectSelect.innerHTML = '<option value="" disabled selected>اختر المشروع</option>' +
+                allProjects.map(p => `<option value="${p}">${p}</option>`).join('');
+            if (selected && allProjects.includes(selected)) phaseProjectSelect.value = selected;
+        }
+
         renderTypesList();
     } catch (err) {
         console.error(err);
     }
 }
 
-function renderPhasesList() {
-    const box = document.getElementById('phasesListBox');
+function renderCurrentProjectPhases() {
+    const box = document.getElementById('currentProjectPhasesBox');
     if (!box) return;
-    box.textContent = phasesList.length ? 'المراحل الحالية: ' + phasesList.join('، ') : '';
+    const project = document.getElementById('phaseProjectSelect')?.value;
+    if (!project) { box.textContent = ''; return; }
+    const phases = projectPhases[project] || [];
+    box.textContent = phases.length
+        ? `المراحل الشغالة حاليًا لـ "${project}": ` + phases.join('، ')
+        : `مفيش مراحل شغالة لـ "${project}" حاليًا`;
 }
 
 function renderTypesList() {

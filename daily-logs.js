@@ -1,7 +1,7 @@
 // ═══════════════════════════════════════════════════════════
 // صفحة تسجيل اليوميات — نظام EXO
-// المشرف يقدر يضيف أكتر من بند (نوع + كمية) في نفس التسجيل
-// وكلهم بيتسجلوا مع بعض بمعرف دفعة واحد (batchId)
+// المشرف يقدر يضيف أكتر من بند (نوع + كمية) في نفس التسجيل، وكلهم بيتسجلوا
+// تحت نفس الـ ID. المرحلة بتتحدد حسب المشروع المختار (من شيت "بيانات المشاريع")
 // ═══════════════════════════════════════════════════════════
 import { auth, showMessage, hideMessage, todayStr, formatCurrency } from './firebase-config.js';
 import { onAuthStateChanged } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
@@ -38,7 +38,8 @@ let projects = [];
 let isAdmin = false;
 let assignedProjects = []; // المشاريع المخصصة للمشرف الحالي (فاضية = بيشوف الكل)
 let dailyLogTypes = []; // أنواع اليوميات (id/اسم/سعر/سعر يدوي) — من شيت "أسعار اليوميات"
-let cart = []; // البنود المضافة قبل الحفظ النهائي — كلها بتتسجل مع بعض بمعرف دفعة واحد
+let projectPhases = {}; // المراحل الشغالة لكل مشروع — من شيت "بيانات المشاريع" (المرحلة اللي حالتها مش "شغالة" ما بتظهرش)
+let cart = []; // البنود المضافة قبل الحفظ النهائي — كلها بتتسجل مع بعض بمعرف واحد
 
 onAuthStateChanged(auth, async (user) => {
     if (!user) { window.location.href = 'index.html'; return; }
@@ -55,6 +56,7 @@ onAuthStateChanged(auth, async (user) => {
     await loadSetupData();
     await loadRecentLogs();
 
+    logProject.addEventListener('change', updatePhaseOptions);
     logType.addEventListener('change', handleTypeChange);
     logQuantity.addEventListener('input', calculateItemTotal);
     logCustomPrice.addEventListener('input', calculateItemTotal);
@@ -67,6 +69,7 @@ async function loadSetupData() {
         const data = await getSetupData();
         projects = data.projects || [];
         dailyLogTypes = data.dailyLogTypes || [];
+        projectPhases = data.projectPhases || {};
 
         // لو المشرف معاه مشاريع مخصصة، يشوفها بس — غير كده يشوف كل المشاريع (زي الأدمن)
         const visibleProjects = (!isAdmin && assignedProjects.length > 0)
@@ -76,9 +79,8 @@ async function loadSetupData() {
         logProject.innerHTML = '<option value="" disabled selected>اختر المشروع</option>' +
             visibleProjects.map(p => `<option value="${p}">${p}</option>`).join('');
 
-        const phases = data.phases || [];
-        logPhase.innerHTML = '<option value="" disabled selected>اختر المرحلة</option>' +
-            phases.map(p => `<option value="${p}">${p}</option>`).join('');
+        // المرحلة بتتحدد لما تختار المشروع (كل مشروع له مراحله الشغالة بس من شيت "بيانات المشاريع")
+        updatePhaseOptions();
 
         logType.innerHTML = '<option value="" disabled selected>اختر نوع اليومية</option>' +
             dailyLogTypes.map(t => `<option value="${t.id}" data-price="${t.defaultPrice}" data-custom="${t.allowCustomPrice}">${t.name}</option>`).join('');
@@ -86,6 +88,26 @@ async function loadSetupData() {
         console.error(err);
         showMessage('فشل تحميل البيانات: ' + err.message);
     }
+}
+
+function updatePhaseOptions() {
+    const project = logProject.value;
+    const phases = project ? (projectPhases[project] || []) : [];
+
+    if (!project) {
+        logPhase.innerHTML = '<option value="" disabled selected>اختر المشروع أولاً</option>';
+        logPhase.disabled = true;
+        return;
+    }
+    if (phases.length === 0) {
+        logPhase.innerHTML = '<option value="" disabled selected>لا توجد مراحل شغالة لهذا المشروع</option>';
+        logPhase.disabled = true;
+        return;
+    }
+
+    logPhase.disabled = false;
+    logPhase.innerHTML = '<option value="" disabled selected>اختر المرحلة</option>' +
+        phases.map(p => `<option value="${p}">${p}</option>`).join('');
 }
 
 function handleTypeChange() {
