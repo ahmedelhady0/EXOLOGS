@@ -31,8 +31,10 @@ const submitBtn = document.getElementById('submitBtn');
 const closeMessageBtn = document.getElementById('closeMessageBtn');
 const noProjectsWarning = document.getElementById('noProjectsWarning');
 const loggingFormSections = document.getElementById('loggingFormSections');
+const refreshBtn = document.getElementById('refreshBtn');
 
 closeMessageBtn?.addEventListener('click', hideMessage);
+refreshBtn?.addEventListener('click', refreshData);
 
 logDate.value = todayStr();
 
@@ -107,6 +109,31 @@ function applySetupData(data, roleLoadFailed) {
         dailyLogTypes.map(t => `<option value="${t.id}" data-price="${t.defaultPrice}" data-custom="${t.allowCustomPrice}">${t.name}</option>`).join('');
 }
 
+// زر تحديث البيانات: بيمسح الكاش (المحلي + كاش السيرفر) ويعيد تحميل المشاريع والمراحل فوراٍ
+async function refreshData() {
+    try {
+        refreshBtn.disabled = true;
+        refreshBtn.textContent = '⏳ جاري التحديث...';
+        const prevProject = logProject.value;
+        // true = forceRefresh: بيمسح كاش localStorage ويبعت refresh=1 للسيرفر عشان يمسح كاش Apps Script
+        const setupData = await getSetupData(true);
+        if (setupData) applySetupData(setupData, false);
+        // لو المشروع المختار لسه موجود بعد التحديث، فضّله مختار وحدّث قائمة مراحله
+        if (prevProject && [...logProject.options].some(o => o.value === prevProject)) {
+            logProject.value = prevProject;
+            updatePhaseOptions();
+        }
+        showMessage('✅ تم تحديث البيانات');
+        setTimeout(() => hideMessage(), 1000);
+    } catch (err) {
+        console.error(err);
+        showMessage('❌ فشل التحديث: ' + err.message);
+    } finally {
+        refreshBtn.disabled = false;
+        refreshBtn.textContent = '🔄 تحديث البيانات';
+    }
+}
+
 function updatePhaseOptions() {
     const project = logProject.value;
     const phases = project ? (projectPhases[project] || []) : [];
@@ -173,6 +200,9 @@ function calculateItemTotal() {
 }
 
 function handleAddItem() {
+    const phase = logPhase.value;
+    if (!phase) { showMessage('يرجى اختيار المرحلة'); return; }
+
     const typeId = logType.value;
     if (!typeId) { showMessage('يرجى اختيار نوع اليومية'); return; }
 
@@ -188,10 +218,12 @@ function handleAddItem() {
     const typeName = typeInfo?.name || selectedOption?.textContent || typeId;
     const totalCost = quantity * unitPrice;
 
-    cart.push({ typeId, typeName, quantity, unitPrice, totalCost });
+    // كل بند بيحتفظ بمرحلته الخاصة — عشان تقدر تسجل أكتر من بند بمراحل مختلفة في نفس السلة
+    cart.push({ typeId, typeName, phase, quantity, unitPrice, totalCost });
     renderCart();
 
     // تصفير حقول "إضافة بند" عشان تضيف بند تاني على طول
+    // (المرحلة بتفضل مختارة لتسهيل إضافة بند تاني بنفس المرحلة، وتقدر تغيّرها للبند الجاي)
     logType.selectedIndex = 0;
     logQuantity.value = '';
     logCustomPrice.value = '';
@@ -220,6 +252,7 @@ function renderCart() {
             <div>
                 <span class="type-badge badge-daily">${item.typeName}</span>
                 <span class="text-sm text-gray-600 mr-2">× ${item.quantity}</span>
+                <div class="text-xs text-gray-400 mt-1">🏗️ ${item.phase}</div>
             </div>
             <div class="flex items-center gap-3">
                 <span class="font-bold text-indigo-600 text-sm">${formatCurrency(item.totalCost)}</span>
@@ -236,11 +269,10 @@ function renderCart() {
 async function handleSubmitBatch() {
     const date = logDate.value;
     const project = logProject.value;
-    const phase = logPhase.value;
     const notes = logNotes.value.trim();
 
-    if (!date || !project || !phase) {
-        showMessage('يرجى اختيار التاريخ والمشروع والمرحلة');
+    if (!date || !project) {
+        showMessage('يرجى اختيار التاريخ والمشروع');
         return;
     }
     if (cart.length === 0) {
@@ -249,15 +281,16 @@ async function handleSubmitBatch() {
     }
 
     const grandTotal = cart.reduce((s, i) => s + i.totalCost, 0);
-    const summary = cart.map(i => `${i.typeName} × ${i.quantity}`).join('، ');
+    const summary = cart.map(i => `${i.typeName} × ${i.quantity} (${i.phase})`).join('، ');
     if (!confirm(`تسجيل: ${summary}\nالإجمالي: ${formatCurrency(grandTotal)}؟`)) return;
 
     try {
         submitBtn.disabled = true;
         submitBtn.textContent = 'جاري الحفظ...';
 
+        // كل بند في السلة بيبعت بمرحلته الخاصة (item.phase) — السيرفر بيحفظ مرحلة كل بند على حدة
         await logDailyLog({
-            date, project, phase, notes,
+            date, project, notes,
             supervisor: currentUsername,
             items: cart
         });
@@ -327,11 +360,11 @@ function renderPendingLogs(logs) {
             return `
                 <div class="p-4 mb-3 rounded-xl" style="border:1px solid rgba(30,60,114,0.12); background:rgba(255,255,255,0.6);">
                     <div class="flex justify-between items-center mb-2">
-                        <span class="text-sm font-bold text-indigo-900">${formatDate(b.date)} — ${b.project} / ${b.phase}</span>
+                        <span class="text-sm font-bold text-indigo-900">${formatDate(b.date)} — ${b.project}</span>
                         ${badge}
                     </div>
                     <div class="flex flex-wrap gap-2 mb-1">
-                        ${b.items.map(i => `<span class="type-badge badge-daily">${i.typeName} × ${i.quantity}</span>`).join('')}
+                        ${b.items.map(i => `<span class="type-badge badge-daily">${i.typeName} × ${i.quantity} — ${i.phase}</span>`).join('')}
                     </div>
                     <div class="flex justify-between items-center mt-2">
                         <span class="font-bold text-indigo-600 text-sm">${formatCurrency(batchTotal)}</span>
@@ -372,11 +405,11 @@ function renderRecentLogs(logs) {
             return `
                 <div class="p-4 mb-3 rounded-xl" style="border:1px solid rgba(30,60,114,0.12); background:rgba(255,255,255,0.6);">
                     <div class="flex justify-between items-center mb-2">
-                        <span class="text-sm font-bold text-indigo-900">${formatDate(b.date)} — ${b.project} / ${b.phase}</span>
+                        <span class="text-sm font-bold text-indigo-900">${formatDate(b.date)} — ${b.project}</span>
                         <span class="font-bold text-indigo-600 text-sm">${formatCurrency(batchTotal)}</span>
                     </div>
                     <div class="flex flex-wrap gap-2">
-                        ${b.items.map(i => `<span class="type-badge badge-daily">${i.typeName} × ${i.quantity}</span>`).join('')}
+                        ${b.items.map(i => `<span class="type-badge badge-daily">${i.typeName} × ${i.quantity} — ${i.phase}</span>`).join('')}
                     </div>
                 </div>
             `;

@@ -9,7 +9,10 @@
 </head>
 <body class="p-4 md:p-8 min-h-screen">
     <div class="container p-6 md:p-8 w-full max-w-xl mx-auto fade-in">
-        <a href="home.html" class="back-link">→ رجوع للرئيسية</a>
+        <div class="flex justify-between items-center mb-4">
+            <a href="home.html" class="back-link" style="margin-bottom:0;">→ رجوع للرئيسية</a>
+            <button type="button" id="refreshBtn" class="btn-gray py-2 px-4 text-sm font-bold">🔄 تحديث البيانات</button>
+        </div>
 
         <h1 class="text-2xl font-bold text-center mb-6" style="color:#1e3c72;">📝 تسجيل اليوميات</h1>
 
@@ -30,18 +33,18 @@
                     <option value="" disabled selected>اختر المشروع</option>
                 </select>
             </div>
-            <div>
-                <label class="block text-sm font-semibold text-gray-700 mb-2">المرحلة</label>
-                <select id="logPhase" required disabled class="input-field block w-full p-3">
-                    <option value="" disabled selected>اختر المشروع أولاً</option>
-                </select>
-            </div>
         </div>
 
         <!-- إضافة بند (نوع + كمية) للقائمة -->
         <div class="section-card p-6 mt-5">
             <h2 class="text-sm font-bold text-gray-700 mb-3">➕ إضافة بند</h2>
             <div class="space-y-4">
+                <div>
+                    <label class="block text-sm font-semibold text-gray-700 mb-2">المرحلة</label>
+                    <select id="logPhase" required disabled class="input-field block w-full p-3">
+                        <option value="" disabled selected>اختر المشروع أولاٍ</option>
+                    </select>
+                </div>
                 <div>
                     <label class="block text-sm font-semibold text-gray-700 mb-2">نوع اليومية</label>
                     <select id="logType" class="input-field block w-full p-3">

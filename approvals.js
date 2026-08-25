@@ -106,13 +106,13 @@ function renderDailyBatches(batches) {
             <div class="section-card p-5 mb-4">
                 <div class="flex flex-wrap justify-between items-center gap-2 mb-3">
                     <div>
-                        <div class="font-bold text-indigo-900">${formatDate(b.date)} — ${b.project} / ${b.phase}</div>
+                        <div class="font-bold text-indigo-900">${formatDate(b.date)} — ${b.project}</div>
                         <div class="text-xs text-gray-500 mt-0.5">المشرف: <b>${b.supervisor}</b></div>
                     </div>
                     <div class="font-bold text-indigo-600">${formatCurrency(total)}</div>
                 </div>
                 <div class="flex flex-wrap gap-2 mb-3">
-                    ${b.items.map(i => `<span class="type-badge badge-daily">${i.typeName} × ${i.quantity}</span>`).join('')}
+                    ${b.items.map(i => `<span class="type-badge badge-daily">${i.typeName} × ${i.quantity} — ${i.phase}</span>`).join('')}
                 </div>
                 ${b.notes ? `<p class="text-xs text-gray-500 mb-3">📝 ${b.notes}</p>` : ''}
                 <div class="flex gap-2">
