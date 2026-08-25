@@ -16,6 +16,7 @@ const custodyContent = document.getElementById('custodyContent');
 const noProjectsWarning = document.getElementById('noProjectsWarning');
 const headerSub = document.getElementById('headerSub');
 const closeMessageBtn = document.getElementById('closeMessageBtn');
+const refreshBtn = document.getElementById('refreshBtn');
 
 // عناصر الفاتورة
 const invDate = document.getElementById('invDate');
@@ -30,6 +31,7 @@ const addInvoiceBtn = document.getElementById('addInvoiceBtn');
 const submitCustodyBtn = document.getElementById('submitCustodyBtn');
 
 closeMessageBtn?.addEventListener('click', hideMessage);
+refreshBtn?.addEventListener('click', refreshData);
 invDate.value = todayStr();
 
 let currentEmail = null;
@@ -86,9 +88,9 @@ onAuthStateChanged(auth, async (user) => {
     submitCustodyBtn.addEventListener('click', handleSubmitCustody);
 });
 
-async function loadSetup() {
+async function loadSetup(forceRefresh = false) {
     try {
-        const data = await getSetupData();
+        const data = await getSetupData(forceRefresh);
         projects = data.projects || [];
         projectPhases = data.projectPhases || {};
         custodyItems = data.custodyItems || [];
@@ -104,6 +106,65 @@ async function loadSetup() {
 function populateItemSelect() {
     invItem.innerHTML = '<option value="">— اختر البند —</option>' +
         custodyItems.map(i => `<option value="${i}">${i}</option>`).join('');
+}
+
+// زر تحديث البيانات: بيمسح الكاش (المحلي + كاش السيرفر) ويعيد تحميل
+// المشاريع والمراحل وبنود العهد وقائمة المستخدمين فوراٍ
+async function refreshData() {
+    try {
+        refreshBtn.disabled = true;
+        refreshBtn.textContent = '⏳ جاري التحديث...';
+
+        const prevProject = custodyProjectSelect.value;
+
+        // حدّث الدور والمشاريع المخصصة (ممكن الأدمن غيّرهم من الشيت)
+        try {
+            const info = await getUserRole(currentEmail);
+            isAdmin = info.role === 'admin';
+            assignedProjects = info.projects || [];
+        } catch (err) { console.error(err); }
+
+        // حدّث بيانات الإعداد مع مسح الكاش (forceRefresh = true)
+        const setup = await loadSetup(true);
+        if (!setup) return;
+
+        const visibleProjects = isAdmin ? projects : projects.filter(p => assignedProjects.includes(p));
+
+        if (!isAdmin && visibleProjects.length === 0) {
+            noProjectsWarning.classList.remove('hidden');
+            custodyContent.classList.add('hidden');
+            return;
+        }
+        noProjectsWarning.classList.add('hidden');
+
+        custodyProjectSelect.innerHTML = '<option value="" disabled selected>— اختر المشروع —</option>' +
+            visibleProjects.map(p => `<option value="${p}">${p}</option>`).join('');
+        populateItemSelect();
+
+        if (isAdmin) {
+            adminSection.classList.remove('hidden');
+            await populateAdminData();
+        }
+
+        // لو المشروع المختار لسه موجود، فضّله مختار وحدّث بياناته (مراحله + عهدته + فواتيره المعلقة)
+        if (prevProject && visibleProjects.includes(prevProject)) {
+            custodyProjectSelect.value = prevProject;
+            await handleProjectChange();
+        } else if (prevProject) {
+            // المشروع المختار مبقاش موجود — اخفِ محتوى العهدة
+            selectedProject = '';
+            custodyContent.classList.add('hidden');
+        }
+
+        showMessage('✅ تم تحديث البيانات');
+        setTimeout(() => hideMessage(), 1000);
+    } catch (err) {
+        console.error(err);
+        showMessage('❌ فشل التحديث: ' + err.message);
+    } finally {
+        refreshBtn.disabled = false;
+        refreshBtn.textContent = '🔄 تحديث البيانات';
+    }
 }
 
 // ── تغيير المشروع: حمّل عهدته ──────────────────────────
@@ -337,6 +398,18 @@ async function handleSubmitCustody() {
 //  قسم الإدارة (للأدمن فقط)
 // ═══════════════════════════════════════════════════════════
 async function setupAdmin(visibleProjects) {
+    await populateAdminData();
+
+    document.getElementById('depositForm').addEventListener('submit', handleDepositSubmit);
+    document.getElementById('assignSupervisorSelect').addEventListener('change', renderProjectAssignBox);
+    document.getElementById('saveProjectsBtn').addEventListener('click', handleSaveProjects);
+    document.getElementById('saveRoleBtn').addEventListener('click', handleSaveRole);
+    document.getElementById('addItemForm').addEventListener('submit', handleAddItemSubmit);
+}
+
+// بيجيب قائمة المستخدمين ويعبّي قوائم الإدارة — بيتنادى عند التحميل وعند التحديث
+// (من غير ما يضيف event listeners تاني عشان ما تتكررش)
+async function populateAdminData() {
     try {
         allUsers = await getUsers();
     } catch (err) {
@@ -353,12 +426,6 @@ async function setupAdmin(visibleProjects) {
 
     const projOptions = projects.map(p => `<option value="${p}">${p}</option>`).join('');
     document.getElementById('depositProject').innerHTML = '<option value="">— اختر —</option>' + projOptions;
-
-    document.getElementById('depositForm').addEventListener('submit', handleDepositSubmit);
-    document.getElementById('assignSupervisorSelect').addEventListener('change', renderProjectAssignBox);
-    document.getElementById('saveProjectsBtn').addEventListener('click', handleSaveProjects);
-    document.getElementById('saveRoleBtn').addEventListener('click', handleSaveRole);
-    document.getElementById('addItemForm').addEventListener('submit', handleAddItemSubmit);
 
     renderItemsList();
 }
