@@ -5,7 +5,7 @@
 // ═══════════════════════════════════════════════════════════
 import { auth, showMessage, hideMessage, todayStr, formatCurrency } from './firebase-config.js';
 import { onAuthStateChanged } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
-import { getSetupData, logDailyLog, getDailyLogs, getUserRole } from './sheets-service.js';
+import { getSetupData, logDailyLog, getDailyLogs, getMyDailyLogRequests, getUserRole } from './sheets-service.js';
 
 const logDate = document.getElementById('logDate');
 const logProject = document.getElementById('logProject');
@@ -26,6 +26,7 @@ const cartCount = document.getElementById('cartCount');
 const cartGrandTotal = document.getElementById('cartGrandTotal');
 const cartGrandTotalValue = document.getElementById('cartGrandTotalValue');
 const recentLogs = document.getElementById('recentLogs');
+const pendingLogs = document.getElementById('pendingLogs');
 const submitBtn = document.getElementById('submitBtn');
 const closeMessageBtn = document.getElementById('closeMessageBtn');
 const noProjectsWarning = document.getElementById('noProjectsWarning');
@@ -49,10 +50,11 @@ onAuthStateChanged(auth, async (user) => {
 
     // الثلاث نداءات دي مالهاش علاقة ببعض، فبنطلقهم مع بعض بدل ما ننتظر كل واحد لوحده
     // (كل نداء لـ Apps Script بياخد وقت، فتشغيلهم متوازي بيقلل وقت التحميل بشكل كبير)
-    const [roleInfo, setupData, logsData] = await Promise.all([
+    const [roleInfo, setupData, logsData, pendingData] = await Promise.all([
         getUserRole(user.email).catch(err => { console.error(err); return null; }),
         getSetupData().catch(err => { console.error(err); showMessage('فشل تحميل البيانات: ' + err.message); return null; }),
-        getDailyLogs(currentUsername).catch(err => { console.error(err); return []; })
+        getDailyLogs(currentUsername).catch(err => { console.error(err); return []; }),
+        getMyDailyLogRequests(user.email).catch(err => { console.error(err); return []; })
     ]);
 
     let roleLoadFailed = false;
@@ -65,6 +67,7 @@ onAuthStateChanged(auth, async (user) => {
 
     if (setupData) applySetupData(setupData, roleLoadFailed);
     renderRecentLogs(logsData || []);
+    renderPendingLogs(pendingData || []);
 
     logProject.addEventListener('change', updatePhaseOptions);
     logType.addEventListener('change', handleTypeChange);
@@ -259,13 +262,13 @@ async function handleSubmitBatch() {
             items: cart
         });
 
-        showMessage('✅ تم تسجيل اليوميات بنجاح');
+        showMessage('✅ تم إرسال اليومية للمهندس للموافقة عليها');
         cart = [];
         renderCart();
         logNotes.value = '';
 
-        setTimeout(() => hideMessage(), 1200);
-        await loadRecentLogs();
+        setTimeout(() => hideMessage(), 1500);
+        await Promise.all([loadRecentLogs(), loadPendingLogs()]);
     } catch (err) {
         console.error(err);
         showMessage('❌ فشل الحفظ: ' + err.message);
@@ -285,10 +288,68 @@ async function loadRecentLogs() {
     }
 }
 
+async function loadPendingLogs() {
+    try {
+        const email = auth.currentUser?.email;
+        if (!email) return;
+        const logs = await getMyDailyLogRequests(email);
+        renderPendingLogs(logs || []);
+    } catch (err) {
+        console.error(err);
+        pendingLogs.innerHTML = '<p class="text-center text-red-500 text-sm">فشل تحميل الطلبات</p>';
+    }
+}
+
+function renderPendingLogs(logs) {
+    try {
+        if (!logs || logs.length === 0) {
+            pendingLogs.innerHTML = '<p class="text-center text-gray-400 text-sm">لا توجد طلبات قيد المراجعة</p>';
+            return;
+        }
+
+        const batches = [];
+        const batchIndex = {};
+        logs.forEach(l => {
+            const key = l.batchId || l.id;
+            if (!batchIndex[key]) {
+                batchIndex[key] = { date: l.date, project: l.project, phase: l.phase, status: l.status, rejectReason: l.rejectReason, items: [] };
+                batches.push(batchIndex[key]);
+            }
+            batchIndex[key].items.push(l);
+        });
+
+        pendingLogs.innerHTML = batches.slice(0, 10).map(b => {
+            const batchTotal = b.items.reduce((s, i) => s + (Number(i.totalCost) || 0), 0);
+            const isPending = b.status === 'بانتظار الموافقة';
+            const badge = isPending
+                ? '<span class="type-badge badge-pending">⏳ بانتظار الموافقة</span>'
+                : '<span class="type-badge badge-rejected">❌ مرفوضة</span>';
+            return `
+                <div class="p-4 mb-3 rounded-xl" style="border:1px solid rgba(30,60,114,0.12); background:rgba(255,255,255,0.6);">
+                    <div class="flex justify-between items-center mb-2">
+                        <span class="text-sm font-bold text-indigo-900">${formatDate(b.date)} — ${b.project} / ${b.phase}</span>
+                        ${badge}
+                    </div>
+                    <div class="flex flex-wrap gap-2 mb-1">
+                        ${b.items.map(i => `<span class="type-badge badge-daily">${i.typeName} × ${i.quantity}</span>`).join('')}
+                    </div>
+                    <div class="flex justify-between items-center mt-2">
+                        <span class="font-bold text-indigo-600 text-sm">${formatCurrency(batchTotal)}</span>
+                        ${(!isPending && b.rejectReason) ? `<span class="text-xs text-red-500">سبب الرفض: ${b.rejectReason}</span>` : ''}
+                    </div>
+                </div>
+            `;
+        }).join('');
+    } catch (err) {
+        console.error(err);
+        pendingLogs.innerHTML = '<p class="text-center text-red-500 text-sm">فشل تحميل الطلبات</p>';
+    }
+}
+
 function renderRecentLogs(logs) {
     try {
         if (!logs || logs.length === 0) {
-            recentLogs.innerHTML = '<p class="text-center text-gray-500 text-sm">لا توجد يوميات مسجلة بعد</p>';
+            recentLogs.innerHTML = '<p class="text-center text-gray-500 text-sm">لا توجد يوميات موافق عليها بعد</p>';
             return;
         }
 

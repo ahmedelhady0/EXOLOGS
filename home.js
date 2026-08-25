@@ -3,16 +3,18 @@
 // ═══════════════════════════════════════════════════════════
 import { auth, showMessage, hideMessage } from './firebase-config.js';
 import { onAuthStateChanged, signOut } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
-import { getSetupData, getDailyLogsSummary, getAdvanceMovements, getUserRole } from './sheets-service.js';
+import { getSetupData, getDailyLogsSummary, getMyCustodySummary, getUserRole } from './sheets-service.js';
 
 const signOutBtn = document.getElementById('signOutBtn');
 const userWelcome = document.getElementById('userWelcome');
 const quickStats = document.getElementById('quickStats');
 const closeMessageBtn = document.getElementById('closeMessageBtn');
+const approvalsCard = document.getElementById('approvalsCard');
 
 closeMessageBtn?.addEventListener('click', hideMessage);
 
 let currentUsername = null;
+let currentEmail = null;
 let isAdmin = false;
 
 onAuthStateChanged(auth, async (user) => {
@@ -20,11 +22,16 @@ onAuthStateChanged(auth, async (user) => {
 
     const username = user.email.replace('@exo-system.local', '');
     currentUsername = username;
+    currentEmail = user.email;
     userWelcome.textContent = `👋 ${username}`;
 
     try {
         const info = await getUserRole(user.email);
         isAdmin = info.role === 'admin';
+        // بطاقة الموافقات تظهر للمهندس أو الأدمن
+        if (info.role === 'admin' || info.role === 'engineer') {
+            approvalsCard.classList.remove('hidden');
+        }
     } catch (err) {
         console.error(err);
     }
@@ -43,10 +50,10 @@ signOutBtn?.addEventListener('click', async () => {
 
 async function loadQuickStats() {
     try {
-        const [setup, dailySummary, advanceMovements] = await Promise.all([
+        const [setup, dailySummary, custodies] = await Promise.all([
             getSetupData(),
             getDailyLogsSummary(currentUsername),
-            getAdvanceMovements(currentUsername)
+            getMyCustodySummary(currentEmail)
         ]);
 
         const projectsCount = (setup.projects || []).length;
@@ -57,11 +64,16 @@ async function loadQuickStats() {
         const todayTotalQty = todayLogs.reduce((sum, d) => sum + (Number(d.quantity) || 0), 0);
         const todayTotalCost = todayLogs.reduce((sum, d) => sum + (Number(d.totalCost) || 0), 0);
 
-        // إحصائيات العهد
-        const movements = advanceMovements || [];
-        const totalDeposit = movements.filter(m => m.type === 'إيداع عهدة').reduce((s, m) => s + (Number(m.amount) || 0), 0);
-        const totalExpense = movements.filter(m => m.type === 'صرف').reduce((s, m) => s + (Number(m.amount) || 0), 0);
-        const remaining = totalDeposit - totalExpense;
+        // عهدة كل مشروع
+        const custodyList = custodies || [];
+        const custodyHtml = custodyList.length
+            ? custodyList.map(c => `
+                <div class="flex justify-between items-center text-sm py-1.5 border-b border-gray-100 last:border-0">
+                    <span class="text-gray-600">${c.project}</span>
+                    <span class="font-bold ${c.remaining >= 0 ? 'text-emerald-600' : 'text-red-600'}">${formatCurrency(c.remaining)}</span>
+                </div>
+            `).join('')
+            : '<p class="text-gray-400 text-sm">لا توجد عهد مفعلة</p>';
 
         quickStats.innerHTML = `
             <div class="section-card p-4">
@@ -73,10 +85,9 @@ async function loadQuickStats() {
                 <div class="text-xl font-bold text-amber-600">${todayTotalQty} وحدة</div>
                 <div class="text-sm text-amber-700">${formatCurrency(todayTotalCost)}</div>
             </div>
-            <div class="section-card p-4">
-                <div class="text-sm text-gray-500 mb-1">عهدة ${currentUsername}</div>
-                <div class="text-xl font-bold ${remaining >= 0 ? 'text-emerald-600' : 'text-red-600'}">${formatCurrency(remaining)}</div>
-                <div class="text-xs text-gray-500">إيداع: ${formatCurrency(totalDeposit)} | صرف: ${formatCurrency(totalExpense)}</div>
+            <div class="section-card p-4 sm:col-span-2">
+                <div class="text-sm text-gray-500 mb-2">المتبقي في العهد (لكل مشروع)</div>
+                ${custodyHtml}
             </div>
         `;
     } catch (err) {

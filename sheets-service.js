@@ -52,8 +52,15 @@ function bustCache(key) {
 // ── القراءة ────────────────────────────────────────────────
 export async function getSetupData(forceRefresh = false) {
     if (forceRefresh) bustCache('cache_setup_exo');
-    return cacheGet('cache_setup_exo', 5 * 60 * 1000, () =>
+    return cacheGet('cache_setup_exo', 30 * 1000, () =>
         callGet({ action: 'getSetupData', ...(forceRefresh ? { refresh: 1 } : {}) })
+    );
+}
+
+export async function getProjectsData(forceRefresh = false) {
+    if (forceRefresh) bustCache('cache_projects_exo');
+    return cacheGet('cache_projects_exo', 30 * 1000, () =>
+        callGet({ action: 'getProjectsData', ...(forceRefresh ? { refresh: 1 } : {}) })
     );
 }
 
@@ -66,10 +73,11 @@ export async function getUsers() {
     return data.users || [];
 }
 
+// اليوميات الموافق عليها
 export async function getDailyLogs(email = null, forceRefresh = false) {
     const cacheKey = 'cache_dailylogs_' + (email || 'all');
     if (forceRefresh) bustCache(cacheKey);
-    return cacheGet(cacheKey, 5 * 60 * 1000, () =>
+    return cacheGet(cacheKey, 30 * 1000, () =>
         callGet({ action: 'getDailyLogs', email }).then(d => d.logs || [])
     );
 }
@@ -78,29 +86,97 @@ export async function getDailyLogsSummary(email = null) {
     return getDailyLogs(email);
 }
 
-export async function getAdvanceMovements(supervisor = null) {
-    const data = await callGet({ action: 'getAdvanceMovements',
-        ...((supervisor && supervisor !== 'الكل') ? { supervisor } : {}) });
-    return data.movements || [];
+// طلبات المشرف نفسه (بانتظار الموافقة / المرفوضة)
+export async function getMyDailyLogRequests(email) {
+    return callGet({ action: 'getMyDailyLogRequests', email }).then(d => d.logs || []);
 }
 
-// ── الكتابة ────────────────────────────────────────────────
+// اليوميات بانتظار الموافقة (للمهندس/الأدمن)
+export async function getPendingDailyLogs() {
+    return callGet({ action: 'getPendingDailyLogs' }).then(d => d.logs || []);
+}
+
+// فواتير العهد بانتظار الموافقة (للمهندس/الأدمن)
+export async function getPendingCustody() {
+    return callGet({ action: 'getPendingCustody' }).then(d => d.items || []);
+}
+
+// طلبات المشرف نفسه (بانتظار الموافقة + المرفوضة) لمشروع معين
+export async function getMyCustodyRequests(email, project = null) {
+    return callGet({ action: 'getMyCustodyRequests', email, project }).then(d => d.items || []);
+}
+
+// حركات عهدة مشروع معين لمشرف معين
+export async function getProjectCustody(project, supervisor = null) {
+    return callGet({ action: 'getProjectCustody', project, supervisor });
+}
+
+// ملخص عهد المشرف عبر كل مشاريعه
+export async function getMyCustodySummary(email) {
+    return callGet({ action: 'getMyCustodySummary', email }).then(d => d.custodies || []);
+}
+
+// بنود العهد
+export async function getCustodyItems() {
+    return callGet({ action: 'getCustodyItems' }).then(d => d.items || []);
+}
+
+// ── الكتابة: اليوميات ────────────────────────────────────
 export async function logDailyLog(data) {
     const r = await callPost({ action: 'logDailyLog', ...data });
-    // مسح الكاش
-    try { localStorage.removeItem('cache_dailylogs_' + data.supervisor); } catch (_) {}
-    try { localStorage.removeItem('cache_dailylogs_all'); } catch (_) {}
+    bustCache('cache_dailylogs_' + data.supervisor);
+    bustCache('cache_dailylogs_all');
     return r;
 }
 
-export async function logAdvanceExpense(data) {
-    return callPost({ action: 'logAdvanceExpense', ...data });
+export async function logDailyLogBatch(data) {
+    return logDailyLog(data);
 }
 
-export async function depositAdvance(data) {
-    return callPost({ action: 'depositAdvance', ...data });
+export async function approveDailyLog(batchId, approverEmail) {
+    const r = await callPost({ action: 'approveDailyLog', batchId, approverEmail });
+    clearCache();
+    return r;
 }
 
+export async function rejectDailyLog(batchId, approverEmail, reason = '') {
+    const r = await callPost({ action: 'rejectDailyLog', batchId, approverEmail, reason });
+    clearCache();
+    return r;
+}
+
+// ── الكتابة: العهد ───────────────────────────────────────
+export async function logCustodyExpense(data) {
+    const r = await callPost({ action: 'logCustodyExpense', ...data });
+    clearCache();
+    return r;
+}
+
+export async function approveCustodyExpense(batchId, approverEmail) {
+    const r = await callPost({ action: 'approveCustodyExpense', batchId, approverEmail });
+    clearCache();
+    return r;
+}
+
+export async function rejectCustodyExpense(batchId, approverEmail, reason = '') {
+    const r = await callPost({ action: 'rejectCustodyExpense', batchId, approverEmail, reason });
+    clearCache();
+    return r;
+}
+
+export async function depositCustody(data) {
+    const r = await callPost({ action: 'depositCustody', ...data });
+    clearCache();
+    return r;
+}
+
+export async function addCustodyItem(name, requesterEmail) {
+    const r = await callPost({ action: 'addCustodyItem', name, requesterEmail });
+    bustCache('cache_setup_exo');
+    return r;
+}
+
+// ── الكتابة: المستخدمين والمشاريع ────────────────────────
 export async function registerUser(userData) {
     return callPost({ action: 'registerUser', ...userData });
 }
@@ -109,21 +185,21 @@ export async function updateUserProjects(username, projects, requesterEmail) {
     return callPost({ action: 'updateUserProjects', username, projects, requesterEmail });
 }
 
+export async function setUserRole(username, role, requesterEmail) {
+    return callPost({ action: 'setUserRole', username, role, requesterEmail });
+}
+
 export async function addProject(name, requesterEmail) {
     const r = await callPost({ action: 'addProject', name, requesterEmail });
     bustCache('cache_setup_exo');
+    bustCache('cache_projects_exo');
     return r;
 }
 
 export async function addProjectPhase(project, phase, requesterEmail) {
     const r = await callPost({ action: 'addProjectPhase', project, phase, requesterEmail });
     bustCache('cache_setup_exo');
-    return r;
-}
-
-export async function addPhase(name, requesterEmail) {
-    const r = await callPost({ action: 'addPhase', name, requesterEmail });
-    bustCache('cache_setup_exo');
+    bustCache('cache_projects_exo');
     return r;
 }
 
@@ -139,9 +215,10 @@ export async function addDailyLogPrice(typeId, price, requesterEmail, name = nul
 export function clearCache() {
     try {
         localStorage.removeItem('cache_setup_exo');
+        localStorage.removeItem('cache_projects_exo');
         for (let i = 0; i < localStorage.length; i++) {
             const key = localStorage.key(i);
-            if (key && (key.startsWith('cache_dailylogs_') || key.startsWith('cache_movements_'))) {
+            if (key && (key.startsWith('cache_dailylogs_') || key.startsWith('cache_movements_') || key.startsWith('cache_custody_'))) {
                 localStorage.removeItem(key);
             }
         }

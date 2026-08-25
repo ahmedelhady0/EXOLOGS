@@ -1,0 +1,53 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>الموافقات - EXO</title>
+    <link rel="stylesheet" href="styles.css">
+    <script src="https://cdn.tailwindcss.com"></script>
+</head>
+<body class="p-4 md:p-8 min-h-screen">
+    <div class="container p-6 md:p-8 w-full max-w-4xl mx-auto fade-in">
+        <a href="home.html" class="back-link">→ رجوع للرئيسية</a>
+        <h1 class="text-2xl title-gradient mb-1">✅ الموافقات</h1>
+        <p class="text-sm text-gray-500 mb-6">مراجعة واعتماد اليوميات وفواتير العهد المقدمة من المشرفين</p>
+
+        <div id="noAccessWarning" class="hidden mb-5 p-4 rounded-xl text-sm font-bold text-white text-center" style="background:linear-gradient(135deg,#f43f5e,#dc2626);">
+            ⚠️ هذه الصفحة للمهندس (المكتب الفني) أو المدير فقط.
+        </div>
+
+        <div id="approvalsContent">
+            <!-- التبويبات -->
+            <div class="flex gap-2 mb-5">
+                <button type="button" id="tabDaily" class="tab-btn tab-active flex-1 py-3 px-4 font-bold text-sm">📝 اليوميات <span id="dailyCount" class="tab-count">0</span></button>
+                <button type="button" id="tabCustody" class="tab-btn flex-1 py-3 px-4 font-bold text-sm">💰 العهد <span id="custodyCount" class="tab-count">0</span></button>
+            </div>
+
+            <!-- قسم اليوميات -->
+            <div id="dailySection">
+                <div id="dailyPendingList">
+                    <p class="text-center text-gray-500 text-sm py-6">جاري التحميل...</p>
+                </div>
+            </div>
+
+            <!-- قسم العهد -->
+            <div id="custodySection" class="hidden">
+                <div id="custodyPendingList">
+                    <p class="text-center text-gray-500 text-sm py-6">جاري التحميل...</p>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- مودال الرسائل -->
+    <div id="messageBox" class="fixed inset-0 modal-backdrop hidden items-center justify-center p-4">
+        <div class="modal-content p-6 shadow-xl w-full max-w-sm text-center">
+            <p id="messageText" class="text-gray-800 font-medium mb-4">رسالة النظام تظهر هنا</p>
+            <button id="closeMessageBtn" class="w-full py-2 px-4 btn-primary text-sm font-medium">إغلاق</button>
+        </div>
+    </div>
+
+    <script type="module" src="approvals.js"></script>
+</body>
+</html>

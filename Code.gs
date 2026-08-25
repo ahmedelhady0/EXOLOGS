@@ -1,23 +1,24 @@
 /**
  * =============================================
  * نظام EXO - Code.gs للـ Google Apps Script
- * يدير: المستخدمين، المشاريع، اليوميات، العهد
+ * يدير: المستخدمين، المشاريع، اليوميات (بنظام موافقات)، العهد (لكل مشروع شيت منفصل + موافقات)
+ * الرتب: admin (مدير) / engineer (مهندس - مكتب فني: يوافق) / supervisor (مشرف: يسجل)
  * =============================================
  */
 
 const SHEET_NAMES = {
   projects: 'بيانات المشاريع',
-  materials: 'المواد', // قد لا نحتاجها لكن نتركها للتوافق
-  suppliers: 'الموردين',
   users: 'Users',
-  dailyLogs: 'سجل اليوميات',
+  dailyLogs: 'سجل اليوميات',              // اليوميات الموافق عليها فقط
+  pendingDailyLogs: 'يوميات تحت المراجعة', // اليوميات بانتظار موافقة المهندس
   dailyLogPrices: 'أسعار اليوميات',
-  phases: 'المراحل',
-  advanceMovements: 'سجل حركات العهدة'
+  custodyItems: 'بنود العهد',              // البنود اللي المشرف بيختار منها في الفاتورة
+  pendingCustody: 'عهد تحت المراجعة',      // فواتير العهد بانتظار موافقة المهندس
+  custodyPrefix: 'عهدة - '                 // بادئة شيتات العهد: "عهدة - اسم المشروع"
 };
 
-// قيم بداية فقط (seed) — بعد كده المراحل الفعلية بتتقرا من شيت "المراحل" وتتعدل من غير ما تلمس الكود
-const DEFAULT_PHASES = ['فوم', 'رولات', 'أسمنتي', 'دورات مياه'];
+// ضريبة القيمة المضافة 15% — المبلغ المدخل "شامل الضريبة" وبنستخرج منه قيمة الضريبة
+const VAT_RATE = 0.15;
 
 // أنواع اليوميات الافتراضية مع أسعارها
 const DEFAULT_DAILY_LOG_TYPES = [
@@ -30,7 +31,15 @@ const DEFAULT_DAILY_LOG_TYPES = [
   { id: 'lump_sum', name: 'مقطوعية', defaultPrice: 0, allowCustomPrice: true }
 ];
 
-// ── دوال مساعدة عامة ─────────────────────────────
+// حالات الموافقة
+const STATUS_PENDING = 'بانتظار الموافقة';
+const STATUS_APPROVED = 'موافق عليها';
+const STATUS_REJECTED = 'مرفوضة';
+
+// ═══════════════════════════════════════════════════════════
+//  دوال مساعدة عامة
+// ═══════════════════════════════════════════════════════════
+
 function ensureColumn_(sheet, headerName) {
   const headerIdx = getHeaderRowIndex(sheet);
   const lastCol = sheet.getLastColumn();
@@ -52,21 +61,20 @@ function getUserByUsername_(username) {
   return users.find(u => String(u['username'] || '').trim().toLowerCase() === String(username || '').trim().toLowerCase());
 }
 
-// امتناع تنفيذ إجراء لو المشرف مش مسموح له بالمشروع ده (لو معاه تقييد أصلاً)
+// امتناع تنفيذ إجراء لو المشرف مش مسموح له بالمشروع ده (لو معاه تقييد أصلاٌ)
 function assertProjectAllowed_(username, project) {
-  if (!project) return; // بدون مشروع (زي بند صرف عام) مسموح دايمًا
+  if (!project) return;
   if (String(username || '').trim().toLowerCase() === 'admin') return;
   const user = getUserByUsername_(username);
-  if (!user) return; // تحوط: لو مش لاقيينه بالاسم سيبها تعدي بدل ما توقف العمل
+  if (!user) return;
   if (String(user['role'] || '').toLowerCase() === 'admin') return;
   const assigned = parseProjectsField_(user['المشاريع المخصصة']);
-  if (assigned.length === 0) return; // لسه الأدمن ما حددش مشاريع لهذا المشرف = مفيش تقييد
+  if (assigned.length === 0) return;
   if (assigned.indexOf(project) === -1) {
     throw new Error('غير مصرح لك بالتسجيل على هذا المشروع');
   }
 }
 
-// كل الإجراءات الحساسة (إضافة مشروع، تعديل سعر، إيداع عهدة، تعيين مشاريع) لازم تتأكد إن الطالب أدمن فعلاً
 function isAdminEmail_(email) {
   const username = email ? String(email).split('@')[0].toLowerCase() : '';
   if (username === 'admin') return true;
@@ -77,6 +85,22 @@ function isAdminEmail_(email) {
 function requireAdmin_(email) {
   if (!isAdminEmail_(email)) {
     throw new Error('غير مصرح: هذا الإجراء للمدير فقط');
+  }
+}
+
+// المهندس (المكتب الفني) أو الأدمن — هما اللي يقدروا يوافقوا على اليوميات والعهد
+function isApproverEmail_(email) {
+  const username = email ? String(email).split('@')[0].toLowerCase() : '';
+  if (username === 'admin') return true;
+  const user = getUserByUsername_(username);
+  if (!user) return false;
+  const role = String(user['role'] || '').toLowerCase();
+  return role === 'admin' || role === 'engineer';
+}
+
+function requireApprover_(email) {
+  if (!isApproverEmail_(email)) {
+    throw new Error('غير مصرح: هذا الإجراء للمهندس أو المدير فقط');
   }
 }
 
@@ -105,7 +129,7 @@ function getHeaderRowIndex(sheet) {
 function sheetToObjects(sheet) {
   const values = sheet.getDataRange().getValues();
   if (values.length < 2) return [];
-  const headerIdx = getHeaderRowIndexFromValues_(values); // بدون قراءة الشيت تاني
+  const headerIdx = getHeaderRowIndexFromValues_(values);
   const headers = values[headerIdx].map(normalizeHeader);
   return values.slice(headerIdx + 1)
     .filter(row => row.some(c => c !== '' && c !== null))
@@ -127,7 +151,35 @@ function jsonResponse(obj) {
     .setMimeType(ContentService.MimeType.JSON);
 }
 
-// ── إنشاء الشيتات المطلوبة ─────────────────────────
+// تنظيف اسم المشروع عشان يصلح يكون اسم شيت (جوجل شيتس بيمنع : \ / ? * [ ])
+function sanitizeSheetName_(name) {
+  return String(name || '').replace(/[:\\\/\?\*\[\]]/g, '-').trim().slice(0, 80);
+}
+
+// حساب الضريبة: المبلغ المدخل "شامل الضريبة"
+// لو فاتورة ضريبية: الضريبة = المبلغ - (المبلغ / 1.15) ، الصافي = المبلغ / 1.15
+// لو مش ضريبية: الضريبة = 0 ، الصافي = المبلغ
+function calcTax_(amount, isTaxInvoice) {
+  const amt = Math.round((parseFloat(amount) || 0) * 100) / 100;
+  if (!isTaxInvoice) return { gross: amt, tax: 0, net: amt };
+  const net = Math.round((amt / (1 + VAT_RATE)) * 100) / 100;
+  const tax = Math.round((amt - net) * 100) / 100;
+  return { gross: amt, tax, net };
+}
+
+function formatWafeqDate_(date) {
+  if (typeof date === 'string') date = new Date(date);
+  return Utilities.formatDate(date, Session.getScriptTimeZone(), 'yyyy-MM-dd');
+}
+
+function newId_(prefix) {
+  return prefix + '-' + Utilities.formatDate(new Date(), Session.getScriptTimeZone(), 'yyyyMMdd-HHmmss') + '-' + Math.floor(Math.random() * 1000);
+}
+
+// ═══════════════════════════════════════════════════════════
+//  إنشاء الشيتات المطلوبة
+// ═══════════════════════════════════════════════════════════
+
 function getOrCreateUsersSheet() {
   const ss = SpreadsheetApp.getActiveSpreadsheet();
   let sheet = ss.getSheetByName(SHEET_NAMES.users);
@@ -135,11 +187,12 @@ function getOrCreateUsersSheet() {
     sheet = ss.insertSheet(SHEET_NAMES.users);
     sheet.appendRow(['uid', 'username', 'email', 'role', 'تاريخ الإنشاء', 'الحالة', 'المشاريع المخصصة']);
   } else {
-    ensureColumn_(sheet, 'المشاريع المخصصة'); // ترقية تلقائية لو الشيت اتعمل قبل إضافة الميزة دي
+    ensureColumn_(sheet, 'المشاريع المخصصة');
   }
   return sheet;
 }
 
+// اليوميات الموافق عليها (النهائية)
 function getOrCreateDailyLogsSheet() {
   const ss = SpreadsheetApp.getActiveSpreadsheet();
   let sheet = ss.getSheetByName(SHEET_NAMES.dailyLogs);
@@ -150,13 +203,23 @@ function getOrCreateDailyLogsSheet() {
   return sheet;
 }
 
+// اليوميات بانتظار الموافقة — نفس أعمدة سجل اليوميات + الحالة + سبب الرفض
+function getOrCreatePendingDailyLogsSheet() {
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  let sheet = ss.getSheetByName(SHEET_NAMES.pendingDailyLogs);
+  if (!sheet) {
+    sheet = ss.insertSheet(SHEET_NAMES.pendingDailyLogs);
+    sheet.appendRow(['ID', 'التاريخ', 'المشروع', 'المرحلة', 'نوع اليومية', 'اسم النوع', 'الكمية', 'سعر الوحدة', 'الإجمالي', 'ملاحظات', 'المشرف', 'تاريخ التسجيل', 'الحالة', 'سبب الرفض']);
+  }
+  return sheet;
+}
+
 function getOrCreateDailyLogPricesSheet() {
   const ss = SpreadsheetApp.getActiveSpreadsheet();
   let sheet = ss.getSheetByName(SHEET_NAMES.dailyLogPrices);
   if (!sheet) {
     sheet = ss.insertSheet(SHEET_NAMES.dailyLogPrices);
     sheet.appendRow(['النوع', 'الاسم', 'السعر الافتراضي', 'يسمح بسعر مخصص']);
-    // تعبئة البيانات الافتراضية
     DEFAULT_DAILY_LOG_TYPES.forEach(t => {
       sheet.appendRow([t.id, t.name, t.defaultPrice, t.allowCustomPrice]);
     });
@@ -164,26 +227,54 @@ function getOrCreateDailyLogPricesSheet() {
   return sheet;
 }
 
-function getOrCreatePhasesSheet() {
+// بنود العهد — قائمة البنود اللي المشرف بيختار منها وقت تسجيل الفاتورة
+function getOrCreateCustodyItemsSheet() {
   const ss = SpreadsheetApp.getActiveSpreadsheet();
-  let sheet = ss.getSheetByName(SHEET_NAMES.phases);
+  let sheet = ss.getSheetByName(SHEET_NAMES.custodyItems);
   if (!sheet) {
-    sheet = ss.insertSheet(SHEET_NAMES.phases);
-    sheet.appendRow(['اسم المرحلة']);
-    DEFAULT_PHASES.forEach(p => sheet.appendRow([p]));
+    sheet = ss.insertSheet(SHEET_NAMES.custodyItems);
+    sheet.appendRow(['اسم البند']);
   }
   return sheet;
 }
 
-function getPhasesList_() {
-  try {
-    const list = sheetToObjects(getOrCreatePhasesSheet())
-      .map(r => String(r['اسم المرحلة'] || '').trim())
-      .filter(Boolean);
-    return list.length ? list : DEFAULT_PHASES;
-  } catch (err) {
-    return DEFAULT_PHASES;
+// فواتير العهد بانتظار الموافقة
+function getOrCreatePendingCustodySheet() {
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  let sheet = ss.getSheetByName(SHEET_NAMES.pendingCustody);
+  if (!sheet) {
+    sheet = ss.insertSheet(SHEET_NAMES.pendingCustody);
+    sheet.appendRow(['ID', 'التاريخ', 'المشروع', 'القيمة', 'قيمة الضريبة', 'صافي القيمة', 'فاتورة ضريبية', 'رقم الفاتورة', 'المرحلة', 'البند', 'الوصف', 'المشرف', 'تاريخ التسجيل', 'الحالة', 'سبب الرفض']);
   }
+  return sheet;
+}
+
+// شيت عهدة لكل مشروع على حدة: "عهدة - اسم المشروع"
+function getOrCreateProjectCustodySheet(project) {
+  const name = SHEET_NAMES.custodyPrefix + sanitizeSheetName_(project);
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  let sheet = ss.getSheetByName(name);
+  if (!sheet) {
+    sheet = ss.insertSheet(name);
+    sheet.appendRow(['ID', 'التاريخ', 'نوع الحركة', 'القيمة', 'قيمة الضريبة', 'صافي القيمة', 'فاتورة ضريبية', 'رقم الفاتورة', 'المرحلة', 'البند', 'الوصف', 'المشرف', 'المسجل بواسطة', 'تاريخ التسجيل']);
+  }
+  return sheet;
+}
+
+// بيقرا شيت عهدة المشروع لو موجود فقط (من غير ما ينشئه) — عشان الملخص مايعملش شيتات فاضية
+function getProjectCustodySheetIfExists_(project) {
+  const name = SHEET_NAMES.custodyPrefix + sanitizeSheetName_(project);
+  return SpreadsheetApp.getActiveSpreadsheet().getSheetByName(name);
+}
+
+function getOrCreateProjectsSheet() {
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  let sheet = ss.getSheetByName(SHEET_NAMES.projects);
+  if (!sheet) {
+    sheet = ss.insertSheet(SHEET_NAMES.projects);
+    sheet.appendRow(['اسم المشروع', 'المرحلة', 'الحالة', 'تاريخ الإضافة']);
+  }
+  return sheet;
 }
 
 function getDailyLogTypesList_() {
@@ -200,44 +291,14 @@ function getDailyLogTypesList_() {
   }
 }
 
-function getOrCreateAdvanceSheet() {
-  const ss = SpreadsheetApp.getActiveSpreadsheet();
-  let sheet = ss.getSheetByName(SHEET_NAMES.advanceMovements);
-  if (!sheet) {
-    sheet = ss.insertSheet(SHEET_NAMES.advanceMovements);
-    sheet.appendRow(['ID', 'التاريخ', 'المشروع', 'المبلغ', 'رقم الفاتورة', 'الوصف', 'المشرف', 'نوع الحركة', 'المسجل بواسطة', 'تاريخ التسجيل']);
+function getCustodyItemsList_() {
+  try {
+    return sheetToObjects(getOrCreateCustodyItemsSheet())
+      .map(r => String(r['اسم البند'] || '').trim())
+      .filter(Boolean);
+  } catch (err) {
+    return [];
   }
-  return sheet;
-}
-
-function getOrCreateProjectsSheet() {
-  const ss = SpreadsheetApp.getActiveSpreadsheet();
-  let sheet = ss.getSheetByName(SHEET_NAMES.projects);
-  if (!sheet) {
-    sheet = ss.insertSheet(SHEET_NAMES.projects);
-    sheet.appendRow(['اسم المشروع', 'المرحلة', 'الحالة', 'تاريخ الإضافة']);
-  }
-  return sheet;
-}
-
-function getOrCreateMaterialsSheet() {
-  const ss = SpreadsheetApp.getActiveSpreadsheet();
-  let sheet = ss.getSheetByName(SHEET_NAMES.materials);
-  if (!sheet) {
-    sheet = ss.insertSheet(SHEET_NAMES.materials);
-    sheet.appendRow(['اسم مختصر للبند', 'المواد المستخدمة', 'الوحدة']);
-  }
-  return sheet;
-}
-
-function getOrCreateSuppliersSheet() {
-  const ss = SpreadsheetApp.getActiveSpreadsheet();
-  let sheet = ss.getSheetByName(SHEET_NAMES.suppliers);
-  if (!sheet) {
-    sheet = ss.insertSheet(SHEET_NAMES.suppliers);
-    sheet.appendRow(['اسم المورد']);
-  }
-  return sheet;
 }
 
 // ═══════════════════════════════════════════════════════════
@@ -248,10 +309,17 @@ function doGet(e) {
   const action = e.parameter.action;
   try {
     if (action === 'getSetupData') return handleGetSetupData(e);
+    if (action === 'getProjectsData') return handleGetProjectsData(e);
     if (action === 'getUserRole') return handleGetUserRole(e);
     if (action === 'getUsers') return handleGetUsers();
     if (action === 'getDailyLogs') return handleGetDailyLogs(e);
-    if (action === 'getAdvanceMovements') return handleGetAdvanceMovements(e);
+    if (action === 'getMyDailyLogRequests') return handleGetMyDailyLogRequests(e);
+    if (action === 'getPendingDailyLogs') return handleGetPendingDailyLogs(e);
+    if (action === 'getPendingCustody') return handleGetPendingCustody(e);
+    if (action === 'getMyCustodyRequests') return handleGetMyCustodyRequests(e);
+    if (action === 'getProjectCustody') return handleGetProjectCustody(e);
+    if (action === 'getMyCustodySummary') return handleGetMyCustodySummary(e);
+    if (action === 'getCustodyItems') return handleGetCustodyItems();
 
     return jsonResponse({ error: 'Unknown action: ' + action });
   } catch (err) {
@@ -264,15 +332,25 @@ function doPost(e) {
     const body = JSON.parse(e.postData.contents);
     const action = body.action;
 
+    // اليوميات
     if (action === 'logDailyLog') return handleLogDailyLog(body);
-    if (action === 'logAdvanceExpense') return handleLogAdvanceExpense(body);
-    if (action === 'depositAdvance') return handleDepositAdvance(body);
+    if (action === 'approveDailyLog') return handleApproveDailyLog(body);
+    if (action === 'rejectDailyLog') return handleRejectDailyLog(body);
+
+    // العهد
+    if (action === 'logCustodyExpense') return handleLogCustodyExpense(body);
+    if (action === 'approveCustodyExpense') return handleApproveCustodyExpense(body);
+    if (action === 'rejectCustodyExpense') return handleRejectCustodyExpense(body);
+    if (action === 'depositCustody') return handleDepositCustody(body);
+    if (action === 'addCustodyItem') return handleAddCustodyItem(body);
+
+    // المستخدمين والمشاريع
     if (action === 'registerUser') return handleRegisterUser(body);
     if (action === 'addProject') return handleAddProject(body);
     if (action === 'addProjectPhase') return handleAddProjectPhase(body);
-    if (action === 'addPhase') return handleAddPhase(body);
     if (action === 'addDailyLogPrice') return handleAddDailyLogPrice(body);
     if (action === 'updateUserProjects') return handleUpdateUserProjects(body);
+    if (action === 'setUserRole') return handleSetUserRole(body);
 
     return jsonResponse({ ok: false, error: 'Unknown action: ' + action });
   } catch (err) {
@@ -281,19 +359,20 @@ function doPost(e) {
 }
 
 // ═══════════════════════════════════════════════════════════
-//  تنفيذ العمليات (GET)
+//  القراءة (GET)
 // ═══════════════════════════════════════════════════════════
 
+// بيانات الإعداد: المشاريع + مراحلها (من بيانات المشاريع فقط) + أنواع اليوميات + بنود العهد
 function handleGetSetupData(e) {
   const cache = CacheService.getScriptCache();
-  const cacheKey = 'setupData_exo_v1';
+  const cacheKey = 'setupData_exo_v2';
 
   if (e.parameter && e.parameter.refresh) cache.remove(cacheKey);
 
   const cached = cache.get(cacheKey);
   if (cached) return jsonResponse(JSON.parse(cached));
 
-  let projects = [], projectDates = {}, allProjects = [], projectPhases = {}, materials = [], suppliers = [], dailyLogPrices = {}, phases = [], dailyLogTypes = [];
+  let projects = [], projectDates = {}, allProjects = [], projectPhases = {}, dailyLogPrices = {}, dailyLogTypes = [], custodyItems = [];
 
   try {
     const projData = sheetToObjects(getOrCreateProjectsSheet());
@@ -307,13 +386,12 @@ function handleGetSetupData(e) {
       const isActive = String(p['الحالة'] || '').trim().includes('شغال');
       if (!name) return;
 
-      allProjectsSet[name] = true; // كل المشاريع (حتى لو مش شغالة) — تفيد الأدمن وقت تفعيل مرحلة
+      allProjectsSet[name] = true;
       if (!isActive) return;
 
       const d = p['تاريخ الإضافة'] ? new Date(p['تاريخ الإضافة']) : null;
       if (d && (!newestDate[name] || d > newestDate[name])) newestDate[name] = d;
 
-      // المراحل الشغالة بس بتتضاف لكل مشروع — لو مسحت "شغالة" من الحالة، المرحلة دي بتختفي من هنا تلقائي
       if (phase) {
         if (!phasesByProject[name]) phasesByProject[name] = [];
         if (phasesByProject[name].indexOf(phase) === -1) phasesByProject[name].push(phase);
@@ -327,32 +405,53 @@ function handleGetSetupData(e) {
   } catch (err) { console.log('Projects Error:', err.message); }
 
   try {
-    const matData = sheetToObjects(getOrCreateMaterialsSheet());
-    materials = matData.map(row => ({
-      phase: String(row['اسم مختصر للبند'] || '').trim(),
-      name: String(row['المواد المستخدمة'] || '').trim(),
-      unit: String(row['الوحدة'] || '').trim()
-    })).filter(m => m.name && m.phase);
-  } catch (err) { console.log('Materials Error:', err.message); }
-
-  try {
-    suppliers = sheetToObjects(getOrCreateSuppliersSheet())
-      .map(s => String(s['اسم المورد'] || '').trim()).filter(Boolean);
-  } catch (err) { console.log('Suppliers Error:', err.message); }
-
-  // أسعار اليوميات (خريطة للتوافق القديم) + قائمة الأنواع الكاملة (المصدر الفعلي للفورم دلوقتي)
-  try {
     dailyLogTypes = getDailyLogTypesList_();
     dailyLogTypes.forEach(t => { dailyLogPrices[t.id] = t.defaultPrice; });
   } catch (err) { console.log('DailyLogPrices Error:', err.message); }
 
-  // المراحل — بتتقرا من شيت "المراحل" فتقدر تضيف/تعدّل من غير ما تلمس الكود
   try {
-    phases = getPhasesList_();
-  } catch (err) { console.log('Phases Error:', err.message); }
+    custodyItems = getCustodyItemsList_();
+  } catch (err) { console.log('CustodyItems Error:', err.message); }
 
-  const result = { projects, projectDates, allProjects, projectPhases, materials, suppliers, dailyLogPrices, dailyLogTypes, phases };
-  cache.put(cacheKey, JSON.stringify(result), 120);
+  const result = { projects, projectDates, allProjects, projectPhases, dailyLogPrices, dailyLogTypes, custodyItems, vatRate: VAT_RATE };
+  cache.put(cacheKey, JSON.stringify(result), 30);
+  return jsonResponse(result);
+}
+
+// نسخة خفيفة: المشاريع + مراحلها فقط (لسرعة تحميل صفحة اليوميات)
+function handleGetProjectsData(e) {
+  const cache = CacheService.getScriptCache();
+  const cacheKey = 'projectsData_exo_v2';
+  if (e.parameter && e.parameter.refresh) cache.remove(cacheKey);
+  const cached = cache.get(cacheKey);
+  if (cached) return jsonResponse(JSON.parse(cached));
+
+  let projects = [], allProjects = [], projectPhases = {};
+  try {
+    const projData = sheetToObjects(getOrCreateProjectsSheet());
+    const newestDate = {};
+    const allProjectsSet = {};
+    const phasesByProject = {};
+    projData.forEach(p => {
+      const name = String(p['اسم المشروع'] || '').trim();
+      const phase = String(p['المرحلة'] || '').trim();
+      const isActive = String(p['الحالة'] || '').trim().includes('شغال');
+      if (!name) return;
+      allProjectsSet[name] = true;
+      if (!isActive) return;
+      newestDate[name] = true;
+      if (phase) {
+        if (!phasesByProject[name]) phasesByProject[name] = [];
+        if (phasesByProject[name].indexOf(phase) === -1) phasesByProject[name].push(phase);
+      }
+    });
+    projects = Object.keys(newestDate);
+    allProjects = Object.keys(allProjectsSet);
+    projectPhases = phasesByProject;
+  } catch (err) { console.log('ProjectsData Error:', err.message); }
+
+  const result = { projects, allProjects, projectPhases };
+  cache.put(cacheKey, JSON.stringify(result), 30);
   return jsonResponse(result);
 }
 
@@ -376,7 +475,6 @@ function handleGetUserRole(e) {
     }
 
     const role = found['role'] || 'supervisor';
-    // مصفوفة فاضية = المشرف لسه مالوش تقييد، فبيشوف كل المشاريع
     const projects = role === 'admin' ? [] : parseProjectsField_(found['المشاريع المخصصة']);
 
     return jsonResponse({ role, username, active: true, projects });
@@ -401,6 +499,7 @@ function handleGetUsers() {
   });
 }
 
+// اليوميات الموافق عليها فقط (من سجل اليوميات)
 function handleGetDailyLogs(e) {
   let logs = sheetToObjects(getOrCreateDailyLogsSheet());
   logs.sort((a, b) => new Date(b['التاريخ'] || 0) - new Date(a['التاريخ'] || 0));
@@ -408,56 +507,189 @@ function handleGetDailyLogs(e) {
   const email = e.parameter.email;
   if (email && email !== 'null' && email !== 'undefined') {
     const username = email.split('@')[0].toLowerCase();
-    logs = logs.filter(l =>
-      String(l['المشرف'] || '').trim().toLowerCase() === username
-    );
+    logs = logs.filter(l => String(l['المشرف'] || '').trim().toLowerCase() === username);
   }
 
-  return jsonResponse({
-    logs: logs.map(l => ({
-      id: l['ID'],
-      batchId: l['معرف الدفعة'],
-      date: l['التاريخ'],
-      project: l['المشروع'],
-      phase: l['المرحلة'],
-      typeId: l['نوع اليومية'],
-      typeName: l['اسم النوع'],
-      quantity: l['الكمية'],
-      unitPrice: l['سعر الوحدة'],
-      totalCost: l['الإجمالي'],
-      notes: l['ملاحظات'],
-      supervisor: l['المشرف']
-    }))
-  });
+  return jsonResponse({ logs: mapDailyLog_(logs, STATUS_APPROVED) });
 }
 
-function handleGetAdvanceMovements(e) {
-  let movements = sheetToObjects(getOrCreateAdvanceSheet());
+// طلبات المشرف نفسه (بانتظار الموافقة + المرفوضة) عشان يشوف حالتها
+function handleGetMyDailyLogRequests(e) {
+  const email = e.parameter.email;
+  const username = email ? email.split('@')[0].toLowerCase() : '';
+  let logs = sheetToObjects(getOrCreatePendingDailyLogsSheet());
+  logs = logs.filter(l => String(l['المشرف'] || '').trim().toLowerCase() === username);
+  logs.sort((a, b) => new Date(b['تاريخ التسجيل'] || 0) - new Date(a['تاريخ التسجيل'] || 0));
+  return jsonResponse({ logs: mapDailyLog_(logs, null) });
+}
+
+// كل اليوميات بانتظار الموافقة (للمهندس/الأدمن)
+function handleGetPendingDailyLogs(e) {
+  let logs = sheetToObjects(getOrCreatePendingDailyLogsSheet());
+  logs = logs.filter(l => String(l['الحالة'] || '').trim() === STATUS_PENDING);
+  logs.sort((a, b) => new Date(b['تاريخ التسجيل'] || 0) - new Date(a['تاريخ التسجيل'] || 0));
+  return jsonResponse({ logs: mapDailyLog_(logs, STATUS_PENDING) });
+}
+
+function mapDailyLog_(logs, forcedStatus) {
+  return logs.map(l => ({
+    id: l['ID'],
+    batchId: l['ID'],
+    date: l['التاريخ'],
+    project: l['المشروع'],
+    phase: l['المرحلة'],
+    typeId: l['نوع اليومية'],
+    typeName: l['اسم النوع'],
+    quantity: l['الكمية'],
+    unitPrice: l['سعر الوحدة'],
+    totalCost: l['الإجمالي'],
+    notes: l['ملاحظات'],
+    supervisor: l['المشرف'],
+    status: forcedStatus || String(l['الحالة'] || '').trim(),
+    rejectReason: l['سبب الرفض'] || ''
+  }));
+}
+
+// كل فواتير العهد بانتظار الموافقة (للمهندس/الأدمن)
+function handleGetPendingCustody(e) {
+  let rows = sheetToObjects(getOrCreatePendingCustodySheet());
+  rows = rows.filter(r => String(r['الحالة'] || '').trim() === STATUS_PENDING);
+  rows.sort((a, b) => new Date(b['تاريخ التسجيل'] || 0) - new Date(a['تاريخ التسجيل'] || 0));
+  return jsonResponse({ items: mapCustodyRow_(rows, STATUS_PENDING) });
+}
+
+// طلبات المشرف نفسه (بانتظار الموافقة + المرفوضة) لمشروع معين — عشان يشوف حالتها
+function handleGetMyCustodyRequests(e) {
+  const email = e.parameter.email;
+  const username = email ? email.split('@')[0].toLowerCase() : '';
+  const project = String((e.parameter && e.parameter.project) || '').trim();
+
+  let rows = sheetToObjects(getOrCreatePendingCustodySheet());
+  rows = rows.filter(r => String(r['المشرف'] || '').trim().toLowerCase() === username);
+  if (project) rows = rows.filter(r => String(r['المشروع'] || '').trim() === project);
+  rows.sort((a, b) => new Date(b['تاريخ التسجيل'] || 0) - new Date(a['تاريخ التسجيل'] || 0));
+  return jsonResponse({ items: mapCustodyRow_(rows, null) });
+}
+
+// حركات عهدة مشروع معين (إيداعات + مصروفات موافق عليها) لمشرف معين
+function handleGetProjectCustody(e) {
+  const project = String((e.parameter && e.parameter.project) || '').trim();
+  const supervisor = String((e.parameter && e.parameter.supervisor) || '').trim();
+  if (!project) return jsonResponse({ error: 'المشروع مطلوب' });
+
+  let movements = [];
+  try {
+    const sheet = getProjectCustodySheetIfExists_(project);
+    if (sheet) movements = sheetToObjects(sheet);
+  } catch (err) {
+    movements = [];
+  }
+  if (supervisor) {
+    movements = movements.filter(m => String(m['المشرف'] || '').trim().toLowerCase() === supervisor.toLowerCase());
+  }
   movements.sort((a, b) => new Date(b['التاريخ'] || 0) - new Date(a['التاريخ'] || 0));
 
-  const supervisor = String((e.parameter && e.parameter.supervisor) || '').trim();
-  if (supervisor) {
-    movements = movements.filter(m => String(m['المشرف'] || '').trim() === supervisor);
-  }
+  const isDeposit = m => String(m['نوع الحركة'] || '').trim() === 'إيداع عهدة';
+  const totalDeposit = movements.filter(isDeposit).reduce((s, m) => s + (Number(m['القيمة']) || 0), 0);
+  const totalExpense = movements.filter(m => !isDeposit(m)).reduce((s, m) => s + (Number(m['القيمة']) || 0), 0);
 
   return jsonResponse({
     movements: movements.map(m => ({
       id: m['ID'],
       date: m['التاريخ'],
-      project: m['المشروع'],
-      amount: m['المبلغ'],
+      type: m['نوع الحركة'],
+      amount: m['القيمة'],
+      tax: m['قيمة الضريبة'],
+      net: m['صافي القيمة'],
+      isTax: m['فاتورة ضريبية'],
       invoice: m['رقم الفاتورة'],
+      phase: m['المرحلة'],
+      item: m['البند'],
       description: m['الوصف'],
-      supervisor: m['المشرف'],
-      type: m['نوع الحركة']
-    }))
+      supervisor: m['المشرف']
+    })),
+    summary: {
+      totalDeposit: Math.round(totalDeposit * 100) / 100,
+      totalExpense: Math.round(totalExpense * 100) / 100,
+      remaining: Math.round((totalDeposit - totalExpense) * 100) / 100
+    }
   });
 }
 
+// ملخص عهد المشرف الحالي عبر كل مشاريعه (للصفحة الرئيسية)
+function handleGetMyCustodySummary(e) {
+  const email = e.parameter.email;
+  const username = email ? email.split('@')[0].toLowerCase() : '';
+
+  // مشاريع المشرف
+  let projects = [];
+  try {
+    const info = sheetToObjects(getOrCreateProjectsSheet());
+    const activeSet = {};
+    info.forEach(p => {
+      if (String(p['الحالة'] || '').trim().includes('شغال')) activeSet[String(p['اسم المشروع'] || '').trim()] = true;
+    });
+    projects = Object.keys(activeSet);
+  } catch (err) { projects = []; }
+
+  const user = getUserByUsername_(username);
+  const assigned = user ? parseProjectsField_(user['المشاريع المخصصة']) : [];
+  const isAdminRole = user && String(user['role'] || '').toLowerCase() === 'admin';
+  if (!isAdminRole && assigned.length) {
+    projects = projects.filter(p => assigned.indexOf(p) !== -1);
+  }
+
+  const custodies = [];
+  projects.forEach(project => {
+    try {
+      const sheet = getProjectCustodySheetIfExists_(project);
+      if (!sheet) return; // المشروع لسه مفيش له شيت عهدة — نتخطاه من غير ما ننشئه
+      const movements = sheetToObjects(sheet)
+        .filter(m => String(m['المشرف'] || '').trim().toLowerCase() === username);
+      const isDeposit = m => String(m['نوع الحركة'] || '').trim() === 'إيداع عهدة';
+      const totalDeposit = movements.filter(isDeposit).reduce((s, m) => s + (Number(m['القيمة']) || 0), 0);
+      const totalExpense = movements.filter(m => !isDeposit(m)).reduce((s, m) => s + (Number(m['القيمة']) || 0), 0);
+      custodies.push({
+        project,
+        totalDeposit: Math.round(totalDeposit * 100) / 100,
+        totalExpense: Math.round(totalExpense * 100) / 100,
+        remaining: Math.round((totalDeposit - totalExpense) * 100) / 100
+      });
+    } catch (err) { /* نتخطى المشروع ده */ }
+  });
+
+  return jsonResponse({ custodies });
+}
+
+function handleGetCustodyItems() {
+  return jsonResponse({ items: getCustodyItemsList_() });
+}
+
+function mapCustodyRow_(rows, forcedStatus) {
+  return rows.map(r => ({
+    id: r['ID'],
+    batchId: r['ID'],
+    date: r['التاريخ'],
+    project: r['المشروع'],
+    amount: r['القيمة'],
+    tax: r['قيمة الضريبة'],
+    net: r['صافي القيمة'],
+    isTax: r['فاتورة ضريبية'],
+    invoice: r['رقم الفاتورة'],
+    phase: r['المرحلة'],
+    item: r['البند'],
+    description: r['الوصف'],
+    supervisor: r['المشرف'],
+    status: forcedStatus || String(r['الحالة'] || '').trim(),
+    rejectReason: r['سبب الرفض'] || ''
+  }));
+}
+
 // ═══════════════════════════════════════════════════════════
-//  تنفيذ العمليات (POST)
+//  اليوميات (POST)
 // ═══════════════════════════════════════════════════════════
 
+// المشرف يسجل يومية → بتروح "يوميات تحت المراجعة" بانتظار موافقة المهندس
 function handleLogDailyLog(body) {
   try {
     assertProjectAllowed_(body.supervisor, body.project);
@@ -471,8 +703,7 @@ function handleLogDailyLog(body) {
     }
 
     const now = new Date();
-    const stamp = Utilities.formatDate(now, Session.getScriptTimeZone(), 'yyyyMMdd-HHmmss');
-    const id = 'DL-' + stamp + '-' + Math.floor(Math.random() * 1000); // نفس المعرف لكل بنود التسجيل ده — عمود واحد بس
+    const id = newId_('DL');
 
     const rows = items.map(item => ([
       id,
@@ -486,64 +717,245 @@ function handleLogDailyLog(body) {
       parseFloat(item.totalCost) || 0,
       body.notes || '',
       body.supervisor || '',
-      now
+      now,
+      STATUS_PENDING,
+      ''
     ]));
 
-    const sheet = getOrCreateDailyLogsSheet();
+    const sheet = getOrCreatePendingDailyLogsSheet();
     sheet.getRange(sheet.getLastRow() + 1, 1, rows.length, rows[0].length).setValues(rows);
 
-    return jsonResponse({ ok: true, id, count: rows.length });
+    return jsonResponse({ ok: true, id, count: rows.length, status: STATUS_PENDING });
   } catch (err) {
     return jsonResponse({ ok: false, error: 'خطأ: ' + err.message });
   }
 }
 
-function handleLogAdvanceExpense(params) {
+// المهندس/الأدمن يوافق على دفعة يوميات → تنتقل من "تحت المراجعة" إلى "سجل اليوميات"
+function handleApproveDailyLog(body) {
   try {
-    const amount = parseFloat(params.amount) || 0;
-    if (amount <= 0) return jsonResponse({ ok: false, error: 'المبلغ غير صحيح' });
-    const supervisor = String(params.supervisor || '').trim();
-    if (!supervisor) return jsonResponse({ ok: false, error: 'المشرف مطلوب' });
-    assertProjectAllowed_(supervisor, String(params.project || '').trim());
+    requireApprover_(body && body.approverEmail);
+    const batchId = String((body && body.batchId) || '').trim();
+    if (!batchId) return jsonResponse({ ok: false, error: 'معرف الدفعة مطلوب' });
 
-    const id = 'ADV-' + Utilities.formatDate(new Date(), Session.getScriptTimeZone(), 'yyyyMMdd-HHmmss') + '-' + Math.floor(Math.random() * 1000);
-    getOrCreateAdvanceSheet().appendRow([
-      id,
-      formatWafeqDate_(params.date || new Date()),
-      String(params.project || '').trim(),
-      Math.round(amount * 100) / 100,
-      String(params.invoice || '').trim(),
-      String(params.description || '').trim(),
-      supervisor,
-      'صرف',
-      String(params.recordedBy || '').trim(),
+    const pendingSheet = getOrCreatePendingDailyLogsSheet();
+    const values = pendingSheet.getDataRange().getValues();
+    const headerIdx = getHeaderRowIndex(pendingSheet);
+
+    // نجمع صفوف الدفعة (أول 12 عمود = أعمدة سجل اليوميات)
+    const rowsToMove = [];
+    const rowNumbers = [];
+    for (let i = headerIdx + 1; i < values.length; i++) {
+      if (String(values[i][0]).trim() === batchId) {
+        rowsToMove.push(values[i].slice(0, 12));
+        rowNumbers.push(i + 1);
+      }
+    }
+    if (!rowsToMove.length) return jsonResponse({ ok: false, error: 'الدفعة غير موجودة' });
+
+    const logSheet = getOrCreateDailyLogsSheet();
+    logSheet.getRange(logSheet.getLastRow() + 1, 1, rowsToMove.length, rowsToMove[0].length).setValues(rowsToMove);
+
+    // حذف الصفوف من تحت المراجعة (من الأسفل للأعلى عشان الفهرسة)
+    rowNumbers.sort((a, b) => b - a).forEach(rn => pendingSheet.deleteRow(rn));
+
+    return jsonResponse({ ok: true, count: rowsToMove.length });
+  } catch (err) {
+    return jsonResponse({ ok: false, error: err.message });
+  }
+}
+
+// المهندس/الأدمن يرفض دفعة يوميات
+function handleRejectDailyLog(body) {
+  try {
+    requireApprover_(body && body.approverEmail);
+    const batchId = String((body && body.batchId) || '').trim();
+    if (!batchId) return jsonResponse({ ok: false, error: 'معرف الدفعة مطلوب' });
+    const reason = String((body && body.reason) || '').trim();
+
+    const pendingSheet = getOrCreatePendingDailyLogsSheet();
+    const values = pendingSheet.getDataRange().getValues();
+    const headerIdx = getHeaderRowIndex(pendingSheet);
+    const headers = getNormalizedHeaders(pendingSheet);
+    const statusCol = headers.indexOf('الحالة');
+    const reasonCol = headers.indexOf('سبب الرفض');
+
+    let count = 0;
+    for (let i = headerIdx + 1; i < values.length; i++) {
+      if (String(values[i][0]).trim() === batchId) {
+        pendingSheet.getRange(i + 1, statusCol + 1).setValue(STATUS_REJECTED);
+        if (reason) pendingSheet.getRange(i + 1, reasonCol + 1).setValue(reason);
+        count++;
+      }
+    }
+    if (!count) return jsonResponse({ ok: false, error: 'الدفعة غير موجودة' });
+    return jsonResponse({ ok: true, count });
+  } catch (err) {
+    return jsonResponse({ ok: false, error: err.message });
+  }
+}
+
+// ═══════════════════════════════════════════════════════════
+//  العهد (POST)
+// ═══════════════════════════════════════════════════════════
+
+// المشرف يسجل فواتير عهدة (سلة) → بتروح "عهد تحت المراجعة" بانتظار الموافقة
+function handleLogCustodyExpense(body) {
+  try {
+    const supervisor = String(body.supervisor || '').trim();
+    const project = String(body.project || '').trim();
+    if (!supervisor) return jsonResponse({ ok: false, error: 'المشرف مطلوب' });
+    if (!project) return jsonResponse({ ok: false, error: 'المشروع مطلوب' });
+    assertProjectAllowed_(supervisor, project);
+
+    const items = Array.isArray(body.items) ? body.items : [];
+    if (!items.length) return jsonResponse({ ok: false, error: 'أضف فاتورة واحدة على الأقل' });
+
+    const now = new Date();
+    const id = newId_('CUS');
+
+    const rows = items.map(it => {
+      const isTax = !!it.isTax;
+      const t = calcTax_(it.amount, isTax);
+      return [
+        id,
+        it.date || formatWafeqDate_(now),
+        project,
+        t.gross,
+        t.tax,
+        t.net,
+        isTax ? 'نعم' : 'لا',
+        String(it.invoice || '').trim(),
+        String(it.phase || '').trim(),
+        String(it.item || '').trim(),
+        String(it.description || '').trim(),
+        supervisor,
+        now,
+        STATUS_PENDING,
+        ''
+      ];
+    });
+
+    const sheet = getOrCreatePendingCustodySheet();
+    sheet.getRange(sheet.getLastRow() + 1, 1, rows.length, rows[0].length).setValues(rows);
+
+    return jsonResponse({ ok: true, id, count: rows.length, status: STATUS_PENDING });
+  } catch (err) {
+    return jsonResponse({ ok: false, error: 'خطأ: ' + err.message });
+  }
+}
+
+// المهندس/الأدمن يوافق على دفعة فواتير عهدة → تنتقل لشيت عهدة المشروع
+function handleApproveCustodyExpense(body) {
+  try {
+    requireApprover_(body && body.approverEmail);
+    const batchId = String((body && body.batchId) || '').trim();
+    if (!batchId) return jsonResponse({ ok: false, error: 'معرف الدفعة مطلوب' });
+
+    const pendingSheet = getOrCreatePendingCustodySheet();
+    const values = pendingSheet.getDataRange().getValues();
+    const headerIdx = getHeaderRowIndex(pendingSheet);
+
+    const rowsToMove = [];
+    const rowNumbers = [];
+    let project = '';
+    for (let i = headerIdx + 1; i < values.length; i++) {
+      if (String(values[i][0]).trim() === batchId) {
+        project = String(values[i][2]).trim(); // عمود المشروع
+        rowsToMove.push(values[i]);
+        rowNumbers.push(i + 1);
+      }
+    }
+    if (!rowsToMove.length) return jsonResponse({ ok: false, error: 'الدفعة غير موجودة' });
+    if (!project) return jsonResponse({ ok: false, error: 'المشروع غير محدد في الدفعة' });
+
+    // تحويل الصفوف لتنسيق شيت عهدة المشروع:
+    // [ID, التاريخ, نوع الحركة, القيمة, قيمة الضريبة, صافي القيمة, فاتورة ضريبية, رقم الفاتورة, المرحلة, البند, الوصف, المشرف, المسجل بواسطة, تاريخ التسجيل]
+    const approver = String((body && body.approverEmail) || '').split('@')[0];
+    const custodyRows = rowsToMove.map(r => ([
+      r[0],   // ID
+      r[1],   // التاريخ
+      'صرف',  // نوع الحركة
+      r[3],   // القيمة
+      r[4],   // قيمة الضريبة
+      r[5],   // صافي القيمة
+      r[6],   // فاتورة ضريبية
+      r[7],   // رقم الفاتورة
+      r[8],   // المرحلة
+      r[9],   // البند
+      r[10],  // الوصف
+      r[11],  // المشرف
+      approver, // المسجل بواسطة
       new Date()
-    ]);
-    return jsonResponse({ ok: true, id });
+    ]));
+
+    const custodySheet = getOrCreateProjectCustodySheet(project);
+    custodySheet.getRange(custodySheet.getLastRow() + 1, 1, custodyRows.length, custodyRows[0].length).setValues(custodyRows);
+
+    rowNumbers.sort((a, b) => b - a).forEach(rn => pendingSheet.deleteRow(rn));
+
+    return jsonResponse({ ok: true, count: custodyRows.length, project });
   } catch (err) {
-    return jsonResponse({ ok: false, error: 'خطأ: ' + err.message });
+    return jsonResponse({ ok: false, error: err.message });
   }
 }
 
-function handleDepositAdvance(params) {
+// المهندس/الأدمن يرفض دفعة فواتير عهدة
+function handleRejectCustodyExpense(body) {
   try {
-    requireAdmin_(params.recordedBy);
-    const amount = parseFloat(params.amount) || 0;
-    if (amount <= 0) return jsonResponse({ ok: false, error: 'المبلغ غير صحيح' });
-    const supervisor = String(params.supervisor || '').trim();
-    if (!supervisor) return jsonResponse({ ok: false, error: 'المشرف مطلوب' });
+    requireApprover_(body && body.approverEmail);
+    const batchId = String((body && body.batchId) || '').trim();
+    if (!batchId) return jsonResponse({ ok: false, error: 'معرف الدفعة مطلوب' });
+    const reason = String((body && body.reason) || '').trim();
 
-    const id = 'DEP-' + Utilities.formatDate(new Date(), Session.getScriptTimeZone(), 'yyyyMMdd-HHmmss') + '-' + Math.floor(Math.random() * 1000);
-    getOrCreateAdvanceSheet().appendRow([
+    const pendingSheet = getOrCreatePendingCustodySheet();
+    const values = pendingSheet.getDataRange().getValues();
+    const headerIdx = getHeaderRowIndex(pendingSheet);
+    const headers = getNormalizedHeaders(pendingSheet);
+    const statusCol = headers.indexOf('الحالة');
+    const reasonCol = headers.indexOf('سبب الرفض');
+
+    let count = 0;
+    for (let i = headerIdx + 1; i < values.length; i++) {
+      if (String(values[i][0]).trim() === batchId) {
+        pendingSheet.getRange(i + 1, statusCol + 1).setValue(STATUS_REJECTED);
+        if (reason) pendingSheet.getRange(i + 1, reasonCol + 1).setValue(reason);
+        count++;
+      }
+    }
+    if (!count) return jsonResponse({ ok: false, error: 'الدفعة غير موجودة' });
+    return jsonResponse({ ok: true, count });
+  } catch (err) {
+    return jsonResponse({ ok: false, error: err.message });
+  }
+}
+
+// الأدمن يودع مباشرة في عهدة مشروع لمشرف (من غير موافقة)
+function handleDepositCustody(body) {
+  try {
+    requireAdmin_(body && body.recordedBy);
+    const amount = parseFloat(body.amount) || 0;
+    if (amount <= 0) return jsonResponse({ ok: false, error: 'المبلغ غير صحيح' });
+    const supervisor = String(body.supervisor || '').trim();
+    const project = String(body.project || '').trim();
+    if (!supervisor) return jsonResponse({ ok: false, error: 'المشرف مطلوب' });
+    if (!project) return jsonResponse({ ok: false, error: 'المشروع مطلوب' });
+
+    const id = newId_('DEP');
+    getOrCreateProjectCustodySheet(project).appendRow([
       id,
-      formatWafeqDate_(params.date || new Date()),
-      '',
-      Math.round(amount * 100) / 100,
-      '',
-      String(params.description || '').trim(),
-      supervisor,
+      formatWafeqDate_(body.date || new Date()),
       'إيداع عهدة',
-      String(params.recordedBy || '').trim(),
+      Math.round(amount * 100) / 100,
+      0,
+      Math.round(amount * 100) / 100,
+      'لا',
+      '',
+      '',
+      '',
+      String(body.description || '').trim(),
+      supervisor,
+      String(body.recordedBy || '').trim(),
       new Date()
     ]);
     return jsonResponse({ ok: true, id });
@@ -551,6 +963,28 @@ function handleDepositAdvance(params) {
     return jsonResponse({ ok: false, error: 'خطأ: ' + err.message });
   }
 }
+
+// الأدمن يضيف بند جديد لبنود العهد
+function handleAddCustodyItem(body) {
+  try {
+    requireAdmin_(body && body.requesterEmail);
+    const name = String((body && body.name) || '').trim();
+    if (!name) return jsonResponse({ ok: false, error: 'اسم البند مطلوب' });
+
+    const existing = getCustodyItemsList_();
+    if (existing.indexOf(name) !== -1) return jsonResponse({ ok: false, error: 'البند موجود بالفعل' });
+
+    getOrCreateCustodyItemsSheet().appendRow([name]);
+    CacheService.getScriptCache().remove('setupData_exo_v2');
+    return jsonResponse({ ok: true });
+  } catch (err) {
+    return jsonResponse({ ok: false, error: err.message });
+  }
+}
+
+// ═══════════════════════════════════════════════════════════
+//  المستخدمين والمشاريع (POST)
+// ═══════════════════════════════════════════════════════════
 
 function handleRegisterUser(body) {
   const sheet = getOrCreateUsersSheet();
@@ -559,7 +993,6 @@ function handleRegisterUser(body) {
   const email = String((body && body.email) || '').trim();
   const role = username.toLowerCase() === 'admin' ? 'admin' : 'supervisor';
 
-  // تجنب تكرار الصف لو registerUser اتنادت أكتر من مرة لنفس الحساب (مثلاً بعد فشل شبكة وإعادة محاولة)
   const existing = sheetToObjects(sheet).find(u =>
     (uid && String(u['uid'] || '').trim() === uid) ||
     (username && String(u['username'] || '').trim().toLowerCase() === username.toLowerCase())
@@ -568,7 +1001,7 @@ function handleRegisterUser(body) {
     return jsonResponse({ ok: true, role: existing['role'] || role, alreadyExists: true });
   }
 
-  sheet.appendRow([uid, username, email, role, new Date(), 'نشط']);
+  sheet.appendRow([uid, username, email, role, new Date(), 'نشط', '']);
   return jsonResponse({ ok: true, role });
 }
 
@@ -600,21 +1033,52 @@ function handleUpdateUserProjects(body) {
   }
 }
 
+// الأدمن يغيّر رتبة مستخدم (supervisor <-> engineer) عشان يحدد مين المهندس اللي يوافق
+function handleSetUserRole(body) {
+  try {
+    requireAdmin_(body && body.requesterEmail);
+    const username = String((body && body.username) || '').trim();
+    const role = String((body && body.role) || '').trim().toLowerCase();
+    if (!username) return jsonResponse({ ok: false, error: 'اسم المستخدم مطلوب' });
+    if (['supervisor', 'engineer'].indexOf(role) === -1) return jsonResponse({ ok: false, error: 'الرتبة غير صالحة' });
+
+    const sheet = getOrCreateUsersSheet();
+    const headerIdx = getHeaderRowIndex(sheet);
+    const headers = getNormalizedHeaders(sheet);
+    const usernameCol = headers.indexOf('username');
+    const roleCol = headers.indexOf('role');
+    const values = sheet.getDataRange().getValues();
+
+    for (let i = headerIdx + 1; i < values.length; i++) {
+      if (String(values[i][usernameCol] || '').trim().toLowerCase() === username.toLowerCase()) {
+        sheet.getRange(i + 1, roleCol + 1).setValue(role);
+        return jsonResponse({ ok: true });
+      }
+    }
+    return jsonResponse({ ok: false, error: 'المستخدم غير موجود' });
+  } catch (err) {
+    return jsonResponse({ ok: false, error: err.message });
+  }
+}
+
+// إضافة مشروع جديد — بقا من غير شيت "المراحل": المشروع بيتضاف بصف واحد من غير مرحلة،
+// والأدمن يضيف المراحل بعدين من "تفعيل مرحلة لمشروع"
 function handleAddProject(body) {
   requireAdmin_(body && body.requesterEmail);
   const name = String((body && body.name) || '').trim();
   if (!name) return jsonResponse({ ok: false, error: 'اسم المشروع مطلوب' });
+
   const sheet = getOrCreateProjectsSheet();
-  const phasesList = getPhasesList_();
-  const now = new Date();
-  phasesList.forEach(phase => {
-    sheet.appendRow([name, phase, 'شغالة', now]);
-  });
-  CacheService.getScriptCache().remove('setupData_exo_v1');
-  return jsonResponse({ ok: true, phases: phasesList.length });
+  const exists = sheetToObjects(sheet).some(p => String(p['اسم المشروع'] || '').trim() === name);
+  if (exists) return jsonResponse({ ok: false, error: 'المشروع موجود بالفعل' });
+
+  sheet.appendRow([name, '', 'شغالة', new Date()]);
+  CacheService.getScriptCache().remove('setupData_exo_v2');
+  CacheService.getScriptCache().remove('projectsData_exo_v2');
+  return jsonResponse({ ok: true });
 }
 
-// تفعيل مرحلة لمشروع موجود (أو إرجاعها "شغالة" لو كانت متوقفة) — ده اللي بيتحكم في ظهورها لصفحة اليوميات
+// تفعيل مرحلة لمشروع — بتتضاف مباشرة في "بيانات المشاريع" وتظهر فوراً (بنمسح الكاش)
 function handleAddProjectPhase(body) {
   requireAdmin_(body && body.requesterEmail);
   const project = String((body && body.project) || '').trim();
@@ -626,33 +1090,19 @@ function handleAddProjectPhase(body) {
   const headers = getNormalizedHeaders(sheet);
   const statusCol = headers.indexOf('الحالة');
 
-  // لو نفس المشروع/المرحلة موجودين بالفعل بأي حالة، رجّعها "شغالة" بدل ما تتكرر
   for (let i = 0; i < data.length; i++) {
     if (String(data[i]['اسم المشروع'] || '').trim() === project && String(data[i]['المرحلة'] || '').trim() === phase) {
       const rowNum = i + 2 + getHeaderRowIndex(sheet);
       sheet.getRange(rowNum, statusCol + 1).setValue('شغالة');
-      CacheService.getScriptCache().remove('setupData_exo_v1');
+      CacheService.getScriptCache().remove('setupData_exo_v2');
+      CacheService.getScriptCache().remove('projectsData_exo_v2');
       return jsonResponse({ ok: true, reactivated: true });
     }
   }
 
   sheet.appendRow([project, phase, 'شغالة', new Date()]);
-  CacheService.getScriptCache().remove('setupData_exo_v1');
-  return jsonResponse({ ok: true });
-}
-
-function handleAddPhase(body) {
-  requireAdmin_(body && body.requesterEmail);
-  const name = String((body && body.name) || '').trim();
-  if (!name) return jsonResponse({ ok: false, error: 'اسم المرحلة مطلوب' });
-
-  const existing = getPhasesList_();
-  if (existing.indexOf(name) !== -1) {
-    return jsonResponse({ ok: false, error: 'المرحلة موجودة بالفعل' });
-  }
-
-  getOrCreatePhasesSheet().appendRow([name]);
-  CacheService.getScriptCache().remove('setupData_exo_v1');
+  CacheService.getScriptCache().remove('setupData_exo_v2');
+  CacheService.getScriptCache().remove('projectsData_exo_v2');
   return jsonResponse({ ok: true });
 }
 
@@ -669,43 +1119,34 @@ function handleAddDailyLogPrice(body) {
   const nameCol = headers.indexOf('الاسم');
   const customCol = headers.indexOf('يسمح بسعر مخصص');
 
-  // البحث عن الصف وتحديثه (لو النوع موجود بالفعل)
   for (let i = 0; i < data.length; i++) {
     if (String(data[i]['النوع'] || '').trim() === typeId) {
-      const rowNum = i + 2 + getHeaderRowIndex(sheet); // +2 لأن الفهرس يبدأ من 0 والرأس في الصف 1
+      const rowNum = i + 2 + getHeaderRowIndex(sheet);
       sheet.getRange(rowNum, priceCol + 1).setValue(price);
       if (body && body.name) sheet.getRange(rowNum, nameCol + 1).setValue(String(body.name).trim());
       if (body && typeof body.allowCustomPrice !== 'undefined') {
         sheet.getRange(rowNum, customCol + 1).setValue(!!body.allowCustomPrice);
       }
-      CacheService.getScriptCache().remove('setupData_exo_v1');
+      CacheService.getScriptCache().remove('setupData_exo_v2');
       return jsonResponse({ ok: true });
     }
   }
 
-  // لو مش لاقيه، أضفه كنوع يومية جديد بالكامل (زي "حداد" مثلاً)
   const name = String((body && body.name) || '').trim() || typeId;
   const allowCustomPrice = !!(body && body.allowCustomPrice);
   sheet.appendRow([typeId, name, price, allowCustomPrice]);
-  CacheService.getScriptCache().remove('setupData_exo_v1');
+  CacheService.getScriptCache().remove('setupData_exo_v2');
   return jsonResponse({ ok: true });
-}
-
-// ── دالة مساعدة لتنسيق التاريخ ─────────────────────
-function formatWafeqDate_(date) {
-  if (typeof date === 'string') date = new Date(date);
-  return Utilities.formatDate(date, Session.getScriptTimeZone(), 'yyyy-MM-dd');
 }
 
 // ── دالة لتهيئة الشيتات (شغلها مرة واحدة) ───────────
 function initializeSheets() {
   getOrCreateUsersSheet();
   getOrCreateDailyLogsSheet();
+  getOrCreatePendingDailyLogsSheet();
   getOrCreateDailyLogPricesSheet();
-  getOrCreatePhasesSheet();
-  getOrCreateAdvanceSheet();
+  getOrCreateCustodyItemsSheet();
+  getOrCreatePendingCustodySheet();
   getOrCreateProjectsSheet();
-  getOrCreateMaterialsSheet();
-  getOrCreateSuppliersSheet();
   console.log('All sheets initialized');
 }

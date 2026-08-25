@@ -252,6 +252,41 @@ body {
 .badge-deposit { background: linear-gradient(135deg, #34d399, #059669); }
 .badge-expense { background: linear-gradient(135deg, #f43f5e, #dc2626); }
 .badge-daily { background: linear-gradient(135deg, #f59e0b, #d97706); }
+.badge-custody { background: linear-gradient(135deg, #60a5fa, #2563eb); }
+.badge-pending { background: linear-gradient(135deg, #fbbf24, #d97706); }
+.badge-rejected { background: linear-gradient(135deg, #f87171, #dc2626); }
+
+.action-approval { border-color: #BBF7D0; }
+.action-approval:hover { border-color: #22C55E; background: #F0FDF4; }
+
+/* تبويبات صفحة الموافقات */
+.tab-btn {
+    background: rgba(255, 255, 255, 0.7);
+    border: 2px solid rgba(30, 60, 114, 0.15);
+    border-radius: 12px;
+    color: #475569;
+    transition: all 0.25s ease;
+    cursor: pointer;
+}
+.tab-btn:hover { border-color: rgba(30, 60, 114, 0.35); }
+.tab-btn.tab-active {
+    background: linear-gradient(135deg, #1e3c72 0%, #2a5298 100%);
+    color: white;
+    border-color: transparent;
+    box-shadow: 0 8px 20px rgba(30, 60, 114, 0.3);
+}
+.tab-count {
+    display: inline-block;
+    min-width: 22px;
+    padding: 1px 7px;
+    border-radius: 20px;
+    background: rgba(244, 63, 94, 0.9);
+    color: white;
+    font-size: 11px;
+    font-weight: 700;
+    margin-right: 4px;
+}
+.tab-btn.tab-active .tab-count { background: rgba(255, 255, 255, 0.25); }
 
 .stat-card {
     position: relative;

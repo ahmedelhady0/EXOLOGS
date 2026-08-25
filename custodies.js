@@ -1,39 +1,48 @@
 // ═══════════════════════════════════════════════════════════
-// صفحة العهد — كل مشرف يرى عهده فقط، الأدمن يرى الجميع
+// صفحة العهد — كل مشروع له عهدة مستقلة بشيت منفصل
+// المشرف يسجل فواتير (سلة) → تروح للمهندس للموافقة
+// الأدمن يودع مباشرة، يعيّن مشاريع، يضيف بنود، ويحدد الرتب
 // ═══════════════════════════════════════════════════════════
-import { auth, showMessage, hideMessage, todayStr, formatDate, formatCurrency } from './firebase-config.js';
+import { auth, showMessage, hideMessage, todayStr, formatCurrency } from './firebase-config.js';
 import { onAuthStateChanged } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
-import { getUserRole, getSetupData, getUsers, getAdvanceMovements, logAdvanceExpense, depositAdvance, updateUserProjects, addProjectPhase, addDailyLogPrice } from './sheets-service.js';
+import {
+    getUserRole, getSetupData, getUsers, getProjectCustody, getMyCustodyRequests,
+    logCustodyExpense, depositCustody, addCustodyItem, updateUserProjects, setUserRole
+} from './sheets-service.js';
 
 const adminSection = document.getElementById('adminSection');
-const summarySection = document.getElementById('summarySection');
-const printArea = document.getElementById('printArea');
-const supervisorSelect = document.getElementById('supervisorSelect');
-const expenseProject = document.getElementById('expenseProject');
-const filterProject = document.getElementById('filterProject');
-const movementsList = document.getElementById('movementsList');
-const movementsEmpty = document.getElementById('movementsEmpty');
-const logTotals = document.getElementById('logTotals');
+const custodyProjectSelect = document.getElementById('custodyProjectSelect');
+const custodyContent = document.getElementById('custodyContent');
+const noProjectsWarning = document.getElementById('noProjectsWarning');
 const headerSub = document.getElementById('headerSub');
-const remainingCard = document.getElementById('remainingCard');
 const closeMessageBtn = document.getElementById('closeMessageBtn');
-const projectAssignBox = document.getElementById('projectAssignBox');
-const saveProjectsBtn = document.getElementById('saveProjectsBtn');
+
+// عناصر الفاتورة
+const invDate = document.getElementById('invDate');
+const invAmount = document.getElementById('invAmount');
+const invIsTax = document.getElementById('invIsTax');
+const invPhase = document.getElementById('invPhase');
+const invItem = document.getElementById('invItem');
+const invInvoice = document.getElementById('invInvoice');
+const invDesc = document.getElementById('invDesc');
+const taxBreakdown = document.getElementById('taxBreakdown');
+const addInvoiceBtn = document.getElementById('addInvoiceBtn');
+const submitCustodyBtn = document.getElementById('submitCustodyBtn');
 
 closeMessageBtn?.addEventListener('click', hideMessage);
+invDate.value = todayStr();
 
 let currentEmail = null;
 let currentUsername = null;
 let isAdmin = false;
-let assignedProjects = []; // مشاريع المشرف الحالي (فاضية = بيشوف الكل)
+let assignedProjects = [];
 let projects = [];
-let allProjects = [];
 let projectPhases = {};
-let typesList = [];
-let allMovements = [];
+let custodyItems = [];
+let vatRate = 0.15;
 let allUsers = [];
-
-document.getElementById('expenseDate').value = todayStr();
+let selectedProject = '';
+let cart = []; // سلة الفواتير قبل الإرسال
 
 onAuthStateChanged(auth, async (user) => {
     if (!user) { window.location.href = 'index.html'; return; }
@@ -48,307 +57,421 @@ onAuthStateChanged(auth, async (user) => {
         console.error(err);
     }
 
+    const setup = await loadSetup();
+    if (!setup) return;
+
+    // المشاريع اللي يشوفها المستخدم
+    const visibleProjects = isAdmin ? projects : projects.filter(p => assignedProjects.includes(p));
+
+    if (!isAdmin && visibleProjects.length === 0) {
+        noProjectsWarning.classList.remove('hidden');
+        return;
+    }
+    noProjectsWarning.classList.add('hidden');
+
+    custodyProjectSelect.innerHTML = '<option value="" disabled selected>— اختر المشروع —</option>' +
+        visibleProjects.map(p => `<option value="${p}">${p}</option>`).join('');
+
+    populateItemSelect();
+
     if (isAdmin) {
         adminSection.classList.remove('hidden');
-        await loadSupervisors();
-        supervisorSelect.addEventListener('change', () => {
-            loadMovements();
-            renderProjectAssignBox();
-        });
-        saveProjectsBtn?.addEventListener('click', handleSaveProjects);
-        document.getElementById('addProjectPhaseForm')?.addEventListener('submit', handleAddProjectPhaseSubmit);
-        document.getElementById('phaseProjectSelect')?.addEventListener('change', renderCurrentProjectPhases);
-        document.getElementById('addTypeForm')?.addEventListener('submit', handleAddTypeSubmit);
-    } else {
-        adminSection.classList.add('hidden');
-        await loadMovements();
+        await setupAdmin(visibleProjects);
     }
 
-    await loadProjects();
-    document.getElementById('expenseForm').addEventListener('submit', handleExpenseSubmit);
-    document.getElementById('depositForm').addEventListener('submit', handleDepositSubmit);
-    document.getElementById('filterFrom').addEventListener('input', renderMovements);
-    document.getElementById('filterTo').addEventListener('input', renderMovements);
-    filterProject.addEventListener('change', renderMovements);
-    document.getElementById('printBtn').addEventListener('click', () => window.print());
+    custodyProjectSelect.addEventListener('change', handleProjectChange);
+    invAmount.addEventListener('input', updateTaxBreakdown);
+    invIsTax.addEventListener('change', updateTaxBreakdown);
+    addInvoiceBtn.addEventListener('click', handleAddInvoice);
+    submitCustodyBtn.addEventListener('click', handleSubmitCustody);
 });
 
-async function loadSupervisors() {
+async function loadSetup() {
     try {
-        allUsers = await getUsers();
-        const supervisors = allUsers.filter(u => u.role !== 'admin' && String(u.status || '').trim() !== 'غير نشط');
-        supervisorSelect.innerHTML = '<option value="">— اختر المشرف —</option>' +
-            supervisors.map(u => `<option value="${u.username}">${u.username}</option>`).join('');
+        const data = await getSetupData();
+        projects = data.projects || [];
+        projectPhases = data.projectPhases || {};
+        custodyItems = data.custodyItems || [];
+        vatRate = data.vatRate || 0.15;
+        return data;
     } catch (err) {
         console.error(err);
-        showMessage('فشل تحميل المشرفين: ' + err.message);
+        showMessage('فشل تحميل البيانات: ' + err.message);
+        return null;
     }
 }
 
-// ── تعيين المشاريع لكل مشرف (للأدمن فقط) ───────────────────
-function renderProjectAssignBox() {
-    if (!projectAssignBox) return;
-    const username = supervisorSelect.value;
-    if (!username) {
-        projectAssignBox.innerHTML = '<div class="text-sm text-gray-400 text-center py-3">اختر مشرف أولاً</div>';
-        saveProjectsBtn?.classList.add('hidden');
+function populateItemSelect() {
+    invItem.innerHTML = '<option value="">— اختر البند —</option>' +
+        custodyItems.map(i => `<option value="${i}">${i}</option>`).join('');
+}
+
+// ── تغيير المشروع: حمّل عهدته ──────────────────────────
+async function handleProjectChange() {
+    selectedProject = custodyProjectSelect.value;
+    if (!selectedProject) return;
+
+    custodyContent.classList.remove('hidden');
+    headerSub.textContent = `عهدة مشروع: ${selectedProject}`;
+
+    // مراحل المشروع الشغالة
+    const phases = projectPhases[selectedProject] || [];
+    invPhase.innerHTML = '<option value="">— اختر المرحلة —</option>' +
+        phases.map(p => `<option value="${p}">${p}</option>`).join('');
+
+    await Promise.all([loadProjectCustody(), loadMyPending()]);
+}
+
+async function loadProjectCustody() {
+    try {
+        // المشرف يشوف حركاته بس، الأدمن يشوف كل حركات المشروع
+        const supervisor = isAdmin ? '' : currentUsername;
+        const data = await getProjectCustody(selectedProject, supervisor || null);
+        renderSummary(data.summary || {});
+        renderMovements(data.movements || []);
+    } catch (err) {
+        console.error(err);
+    }
+}
+
+function renderSummary(s) {
+    const totalDeposit = Number(s.totalDeposit) || 0;
+    const totalExpense = Number(s.totalExpense) || 0;
+    const remaining = Number(s.remaining) || 0;
+
+    document.getElementById('custTotalDeposit').textContent = formatCurrency(totalDeposit);
+    document.getElementById('custTotalExpense').textContent = formatCurrency(totalExpense);
+    document.getElementById('custRemaining').textContent = formatCurrency(remaining);
+
+    const card = document.getElementById('custRemainingCard');
+    card.classList.remove('stat-remaining', 'stat-negative');
+    card.classList.add(remaining < 0 ? 'stat-negative' : 'stat-remaining');
+    document.getElementById('custNegativeAlert').classList.toggle('hidden', remaining >= 0);
+}
+
+function renderMovements(movements) {
+    const tbody = document.getElementById('custMovementsList');
+    const empty = document.getElementById('custMovementsEmpty');
+    tbody.innerHTML = '';
+
+    if (!movements.length) {
+        empty.classList.remove('hidden');
         return;
     }
-    if (projects.length === 0) {
-        projectAssignBox.innerHTML = '<div class="text-sm text-gray-400 text-center py-3">لا توجد مشاريع مضافة بعد</div>';
-        saveProjectsBtn?.classList.add('hidden');
+    empty.classList.add('hidden');
+
+    movements.forEach(m => {
+        const isDeposit = m.type === 'إيداع عهدة';
+        const amt = Number(m.amount) || 0;
+        const row = document.createElement('tr');
+        row.innerHTML = `
+            <td class="whitespace-nowrap">${formatDate(m.date)}</td>
+            <td><span class="type-badge ${isDeposit ? 'badge-deposit' : 'badge-expense'}">${isDeposit ? 'إيداع' : 'صرف'}</span></td>
+            <td>${m.item || '-'}</td>
+            <td>${m.description || '-'}</td>
+            <td>${(m.isTax === 'نعم' || m.isTax === true) ? '✅' : '—'}</td>
+            <td class="font-bold whitespace-nowrap" style="color:${isDeposit ? '#059669' : '#dc2626'}">${isDeposit ? '+' : '−'} ${formatCurrency(amt)}</td>
+        `;
+        tbody.appendChild(row);
+    });
+}
+
+// ── فواتيري قيد المراجعة (للمشرف) ──────────────────────
+async function loadMyPending() {
+    const box = document.getElementById('custPendingList');
+    try {
+        const items = await getMyCustodyRequests(currentEmail, selectedProject);
+        if (!items.length) {
+            box.innerHTML = '<p class="text-center text-gray-400 text-sm py-3">لا توجد فواتير قيد المراجعة</p>';
+            return;
+        }
+        // تجميع حسب الدفعة
+        const batches = [];
+        const idx = {};
+        items.forEach(i => {
+            const key = i.batchId || i.id;
+            if (!idx[key]) { idx[key] = { status: i.status, items: [] }; batches.push(idx[key]); }
+            idx[key].items.push(i);
+        });
+
+        box.innerHTML = batches.map(b => {
+            const total = b.items.reduce((s, i) => s + (Number(i.amount) || 0), 0);
+            const isPending = b.status === 'بانتظار الموافقة';
+            const badge = isPending
+                ? '<span class="type-badge badge-pending">⏳ بانتظار الموافقة</span>'
+                : '<span class="type-badge badge-rejected">❌ مرفوضة</span>';
+            return `
+                <div class="p-3 mb-2 rounded-xl flex justify-between items-center" style="border:1px solid rgba(30,60,114,0.12); background:rgba(255,255,255,0.6);">
+                    <div class="text-sm text-gray-700">${b.items.length} فاتورة — ${formatCurrency(total)}</div>
+                    ${badge}
+                </div>
+            `;
+        }).join('');
+    } catch (err) {
+        console.error(err);
+        box.innerHTML = '<p class="text-center text-red-500 text-sm py-3">فشل التحميل</p>';
+    }
+}
+
+// ── حساب الضريبة (المبلغ شامل الضريبة) ─────────────────
+function calcTax(amount, isTax) {
+    const amt = Math.round((parseFloat(amount) || 0) * 100) / 100;
+    if (!isTax) return { gross: amt, tax: 0, net: amt };
+    const net = Math.round((amt / (1 + vatRate)) * 100) / 100;
+    const tax = Math.round((amt - net) * 100) / 100;
+    return { gross: amt, tax, net };
+}
+
+function updateTaxBreakdown() {
+    const amount = parseFloat(invAmount.value) || 0;
+    const isTax = invIsTax.checked;
+    if (amount <= 0) {
+        taxBreakdown.classList.add('hidden');
+        return;
+    }
+    const t = calcTax(amount, isTax);
+    document.getElementById('taxGross').textContent = formatCurrency(t.gross);
+    document.getElementById('taxValue').textContent = formatCurrency(t.tax);
+    document.getElementById('taxNet').textContent = formatCurrency(t.net);
+    taxBreakdown.classList.remove('hidden');
+}
+
+// ── السلة ────────────────────────────────────────────────
+function handleAddInvoice() {
+    const amount = parseFloat(invAmount.value) || 0;
+    const description = invDesc.value.trim();
+
+    if (amount <= 0) { showMessage('⚠️ أدخل قيمة صحيحة'); return; }
+    if (!description) { showMessage('⚠️ أدخل الوصف'); return; }
+
+    const isTax = invIsTax.checked;
+    const t = calcTax(amount, isTax);
+
+    cart.push({
+        date: invDate.value || todayStr(),
+        amount: t.gross,
+        isTax,
+        invoice: invInvoice.value.trim(),
+        phase: invPhase.value,
+        item: invItem.value,
+        description
+    });
+    renderCart();
+
+    // تصفير الحقول
+    invAmount.value = '';
+    invInvoice.value = '';
+    invDesc.value = '';
+    invIsTax.checked = false;
+    taxBreakdown.classList.add('hidden');
+}
+
+function removeCartInvoice(index) {
+    cart.splice(index, 1);
+    renderCart();
+}
+window.removeCartInvoice = removeCartInvoice;
+
+function renderCart() {
+    const list = document.getElementById('custCartList');
+    const count = document.getElementById('custCartCount');
+    const totalBox = document.getElementById('custCartTotal');
+
+    if (!cart.length) {
+        list.innerHTML = '<p class="text-center text-gray-400 text-sm py-3">لسه مفيش فواتير مضافة</p>';
+        count.textContent = '0 فاتورة';
+        totalBox.classList.add('hidden');
         return;
     }
 
+    count.textContent = `${cart.length} فاتورة`;
+    list.innerHTML = cart.map((c, i) => `
+        <div class="flex justify-between items-center py-2 ${i > 0 ? 'border-t border-gray-100' : ''}">
+            <div class="text-sm text-gray-700">
+                ${c.item ? `<span class="type-badge badge-custody">${c.item}</span> ` : ''}
+                <span>${c.description}</span>
+                ${c.isTax ? '<span class="text-xs text-amber-600 mr-1">(ضريبية)</span>' : ''}
+            </div>
+            <div class="flex items-center gap-3">
+                <span class="font-bold text-indigo-600 text-sm">${formatCurrency(c.amount)}</span>
+                <button type="button" onclick="removeCartInvoice(${i})" class="text-red-500 text-lg leading-none">✖</button>
+            </div>
+        </div>
+    `).join('');
+
+    const total = cart.reduce((s, c) => s + c.amount, 0);
+    totalBox.classList.remove('hidden');
+    document.getElementById('custCartTotalValue').textContent = formatCurrency(total);
+}
+
+async function handleSubmitCustody() {
+    if (!selectedProject) { showMessage('⚠️ اختر المشروع أولاٌ'); return; }
+    if (!cart.length) { showMessage('⚠️ أضف فاتورة واحدة على الأقل'); return; }
+
+    const total = cart.reduce((s, c) => s + c.amount, 0);
+    if (!confirm(`إرسال ${cart.length} فاتورة بإجمالي ${formatCurrency(total)} للموافقة؟`)) return;
+
+    try {
+        submitCustodyBtn.disabled = true;
+        submitCustodyBtn.textContent = 'جاري الإرسال...';
+        await logCustodyExpense({
+            project: selectedProject,
+            supervisor: currentUsername,
+            recordedBy: currentEmail,
+            items: cart
+        });
+        showMessage('✅ تم إرسال الفواتير للمهندس للموافقة');
+        cart = [];
+        renderCart();
+        setTimeout(() => hideMessage(), 1500);
+        await Promise.all([loadMyPending(), loadProjectCustody()]);
+    } catch (err) {
+        showMessage('❌ فشل الإرسال: ' + err.message);
+    } finally {
+        submitCustodyBtn.disabled = false;
+        submitCustodyBtn.textContent = '✅ إرسال للموافقة';
+    }
+}
+
+// ═══════════════════════════════════════════════════════════
+//  قسم الإدارة (للأدمن فقط)
+// ═══════════════════════════════════════════════════════════
+async function setupAdmin(visibleProjects) {
+    try {
+        allUsers = await getUsers();
+    } catch (err) {
+        console.error(err);
+        allUsers = [];
+    }
+
+    const supervisors = allUsers.filter(u => u.role !== 'admin' && String(u.status || '').trim() !== 'غير نشط');
+    const supOptions = supervisors.map(u => `<option value="${u.username}">${u.username}</option>`).join('');
+
+    document.getElementById('depositSupervisor').innerHTML = '<option value="">— اختر —</option>' + supOptions;
+    document.getElementById('assignSupervisorSelect').innerHTML = '<option value="">— اختر المشرف —</option>' + supOptions;
+    document.getElementById('roleUserSelect').innerHTML = '<option value="">— اختر —</option>' + supOptions;
+
+    const projOptions = projects.map(p => `<option value="${p}">${p}</option>`).join('');
+    document.getElementById('depositProject').innerHTML = '<option value="">— اختر —</option>' + projOptions;
+
+    document.getElementById('depositForm').addEventListener('submit', handleDepositSubmit);
+    document.getElementById('assignSupervisorSelect').addEventListener('change', renderProjectAssignBox);
+    document.getElementById('saveProjectsBtn').addEventListener('click', handleSaveProjects);
+    document.getElementById('saveRoleBtn').addEventListener('click', handleSaveRole);
+    document.getElementById('addItemForm').addEventListener('submit', handleAddItemSubmit);
+
+    renderItemsList();
+}
+
+async function handleDepositSubmit(e) {
+    e.preventDefault();
+    const supervisor = document.getElementById('depositSupervisor').value;
+    const project = document.getElementById('depositProject').value;
+    const amount = document.getElementById('depositAmount').value;
+    const description = document.getElementById('depositDesc').value.trim();
+
+    if (!supervisor) { showMessage('⚠️ اختر المشرف'); return; }
+    if (!project) { showMessage('⚠️ اختر المشروع'); return; }
+    if (!amount || Number(amount) <= 0) { showMessage('⚠️ أدخل مبلغ صحيح'); return; }
+    if (!confirm(`إيداع ${amount} ر.س في عهدة "${supervisor}" لمشروع "${project}"؟`)) return;
+
+    try {
+        await depositCustody({ date: todayStr(), amount: Number(amount), description, supervisor, project, recordedBy: currentEmail });
+        showMessage('✅ تم الإيداع بنجاح');
+        document.getElementById('depositAmount').value = '';
+        document.getElementById('depositDesc').value = '';
+        setTimeout(() => hideMessage(), 1200);
+        // لو المشروع المعروض هو نفسه، حدّث العرض
+        if (selectedProject === project) await loadProjectCustody();
+    } catch (err) {
+        showMessage('❌ فشل الإيداع: ' + err.message);
+    }
+}
+
+function renderProjectAssignBox() {
+    const box = document.getElementById('projectAssignBox');
+    const saveBtn = document.getElementById('saveProjectsBtn');
+    const username = document.getElementById('assignSupervisorSelect').value;
+    if (!username) {
+        box.innerHTML = '<div class="text-xs text-gray-400 text-center py-2">اختر مشرف أولاٌ</div>';
+        saveBtn.classList.add('hidden');
+        return;
+    }
+    if (!projects.length) {
+        box.innerHTML = '<div class="text-xs text-gray-400 text-center py-2">لا توجد مشاريع</div>';
+        saveBtn.classList.add('hidden');
+        return;
+    }
     const user = allUsers.find(u => u.username === username);
     const assigned = new Set(user?.projects || []);
-
-    projectAssignBox.innerHTML = `
-        <div class="grid grid-cols-2 sm:grid-cols-3 gap-2">
+    box.innerHTML = `
+        <div class="grid grid-cols-2 gap-2">
             ${projects.map(p => `
-                <label class="flex items-center gap-2 text-sm bg-white border rounded-lg px-3 py-2 cursor-pointer" style="border-color:rgba(30,60,114,0.15);">
+                <label class="flex items-center gap-2 text-xs bg-white border rounded-lg px-2 py-1.5 cursor-pointer" style="border-color:rgba(30,60,114,0.15);">
                     <input type="checkbox" class="project-assign-checkbox" value="${p}" ${assigned.has(p) ? 'checked' : ''}>
                     <span>${p}</span>
                 </label>
             `).join('')}
         </div>
-        <p class="text-xs text-gray-400 mt-2">${assigned.size === 0 ? '⚠️ مفيش مشاريع محددة — المشرف ده مش هيشوف أي مشروع لحد ما تحدد له واحد على الأقل' : ''}</p>
     `;
-    saveProjectsBtn?.classList.remove('hidden');
-}
-
-async function handleAddProjectPhaseSubmit(e) {
-    e.preventDefault();
-    const project = document.getElementById('phaseProjectSelect').value;
-    const input = document.getElementById('newProjectPhaseName');
-    const phase = input.value.trim();
-    if (!project) { showMessage('⚠️ اختر المشروع أولاً'); return; }
-    if (!phase) return;
-    try {
-        await addProjectPhase(project, phase, currentEmail);
-        showMessage('✅ تم تفعيل المرحلة للمشروع');
-        input.value = '';
-        setTimeout(() => hideMessage(), 1200);
-        await loadProjects(); // بيعيد تحميل مراحل المشاريع كمان (نفس getSetupData)
-        renderCurrentProjectPhases();
-    } catch (err) {
-        showMessage('❌ فشل الحفظ: ' + err.message);
-    }
-}
-
-async function handleAddTypeSubmit(e) {
-    e.preventDefault();
-    const typeId = document.getElementById('newTypeId').value.trim();
-    const name = document.getElementById('newTypeName').value.trim();
-    const price = document.getElementById('newTypePrice').value;
-    const allowCustom = document.getElementById('newTypeCustom').checked;
-
-    if (!typeId || !name) { showMessage('⚠️ أدخل المعرف والاسم'); return; }
-
-    try {
-        await addDailyLogPrice(typeId, Number(price) || 0, currentEmail, name, allowCustom);
-        showMessage('✅ تم حفظ نوع اليومية');
-        document.getElementById('addTypeForm').reset();
-        setTimeout(() => hideMessage(), 1200);
-        await loadProjects(); // بيعيد تحميل الأنواع كمان (نفس getSetupData)
-    } catch (err) {
-        showMessage('❌ فشل الحفظ: ' + err.message);
-    }
+    saveBtn.classList.remove('hidden');
 }
 
 async function handleSaveProjects() {
-    const username = supervisorSelect.value;
+    const username = document.getElementById('assignSupervisorSelect').value;
     if (!username) return;
     const checked = Array.from(document.querySelectorAll('.project-assign-checkbox:checked')).map(c => c.value);
     try {
-        saveProjectsBtn.disabled = true;
         await updateUserProjects(username, checked, currentEmail);
         showMessage('✅ تم حفظ مشاريع المشرف');
         setTimeout(() => hideMessage(), 1200);
-        await loadSupervisors();
+        allUsers = await getUsers();
         renderProjectAssignBox();
     } catch (err) {
         showMessage('❌ فشل الحفظ: ' + err.message);
-    } finally {
-        saveProjectsBtn.disabled = false;
     }
 }
 
-async function loadProjects() {
+async function handleSaveRole() {
+    const username = document.getElementById('roleUserSelect').value;
+    const role = document.getElementById('roleSelect').value;
+    if (!username) { showMessage('⚠️ اختر المستخدم'); return; }
     try {
-        const data = await getSetupData();
-        projects = data.projects || []; // القائمة الشغالة — الأدمن محتاجها كاملة لتعيين المشاريع للمشرفين
-        allProjects = data.allProjects || []; // كل المشاريع حتى لو متوقفة — عشان تقدر تفعّل مرحلة لمشروع قديم
-        projectPhases = data.projectPhases || {};
-        typesList = data.dailyLogTypes || [];
-
-        // الأدمن يشوف كل المشاريع. المشرف يشوف بس المشاريع المكتوبة له في "المشاريع المخصصة"
-        // (فاضي = مفيش مشاريع لسه، مش "كل المشاريع") — يقدر برضه يسجل صرف "بدون مشروع"
-        const visibleProjects = isAdmin ? projects : projects.filter(p => assignedProjects.includes(p));
-
-        const options = '<option value="">بدون مشروع</option>' +
-            visibleProjects.map(p => `<option value="${p}">${p}</option>`).join('');
-        expenseProject.innerHTML = options;
-        filterProject.innerHTML = '<option value="">الكل</option>' + options;
-
-        const phaseProjectSelect = document.getElementById('phaseProjectSelect');
-        if (phaseProjectSelect) {
-            const selected = phaseProjectSelect.value;
-            phaseProjectSelect.innerHTML = '<option value="" disabled selected>اختر المشروع</option>' +
-                allProjects.map(p => `<option value="${p}">${p}</option>`).join('');
-            if (selected && allProjects.includes(selected)) phaseProjectSelect.value = selected;
-        }
-
-        renderTypesList();
-    } catch (err) {
-        console.error(err);
-    }
-}
-
-function renderCurrentProjectPhases() {
-    const box = document.getElementById('currentProjectPhasesBox');
-    if (!box) return;
-    const project = document.getElementById('phaseProjectSelect')?.value;
-    if (!project) { box.textContent = ''; return; }
-    const phases = projectPhases[project] || [];
-    box.textContent = phases.length
-        ? `المراحل الشغالة حاليًا لـ "${project}": ` + phases.join('، ')
-        : `مفيش مراحل شغالة لـ "${project}" حاليًا`;
-}
-
-function renderTypesList() {
-    const box = document.getElementById('typesListBox');
-    if (!box) return;
-    box.textContent = typesList.length
-        ? 'الأنواع الحالية: ' + typesList.map(t => `${t.name} (${t.defaultPrice} ر.س)`).join('، ')
-        : '';
-}
-
-async function loadMovements() {
-    const supervisor = isAdmin ? supervisorSelect.value : currentUsername;
-    if (!supervisor) return;
-    try {
-        allMovements = await getAdvanceMovements(supervisor);
-        renderMovements();
-    } catch (err) {
-        console.error(err);
-        showMessage('فشل تحميل سجل العهدة: ' + err.message);
-    }
-}
-
-function renderMovements() {
-    const from = document.getElementById('filterFrom').value;
-    const to = document.getElementById('filterTo').value;
-    const project = filterProject.value;
-    const supervisorName = isAdmin ? supervisorSelect.value : currentUsername;
-
-    let list = [...allMovements].sort((a, b) => new Date(b.date) - new Date(a.date));
-    if (from) list = list.filter(m => new Date(m.date) >= new Date(from));
-    if (to) list = list.filter(m => new Date(m.date) <= new Date(to));
-    if (project) list = list.filter(m => m.project === project);
-
-    const isDeposit = m => m.type === 'إيداع عهدة';
-    const sum = (arr, pred) => arr.filter(pred).reduce((s, m) => s + (Number(m.amount) || 0), 0);
-
-    const totalDeposit = sum(allMovements, isDeposit);
-    const totalExpense = sum(allMovements, m => !isDeposit(m));
-    const remaining = totalDeposit - totalExpense;
-
-    document.getElementById('totalDeposit').textContent = formatCurrency(totalDeposit);
-    document.getElementById('totalExpense').textContent = formatCurrency(totalExpense);
-    document.getElementById('remaining').textContent = formatCurrency(remaining);
-
-    remainingCard.classList.remove('stat-remaining', 'stat-negative');
-    remainingCard.classList.add(remaining < 0 ? 'stat-negative' : 'stat-remaining');
-    document.getElementById('negativeAlert').classList.toggle('hidden', remaining >= 0);
-
-    summarySection.classList.remove('hidden');
-    printArea.classList.remove('hidden');
-    document.getElementById('printTitle').classList.remove('hidden');
-    document.getElementById('printHeader').classList.remove('hidden');
-    document.getElementById('printName').textContent = supervisorName;
-    document.getElementById('printDateSpan').textContent = formatDate(new Date());
-    headerSub.textContent = `سجل صرف العهد ومتابعة المتبقي — ${supervisorName}`;
-
-    movementsList.innerHTML = '';
-    list.forEach(m => {
-        const amt = Number(m.amount) || 0;
-        const dep = isDeposit(m);
-        const row = document.createElement('tr');
-        row.innerHTML = `
-            <td class="whitespace-nowrap">${formatDate(m.date)}</td>
-            <td>${m.project || '-'}</td>
-            <td>${m.description || '-'}</td>
-            <td class="whitespace-nowrap">${m.invoice || '-'}</td>
-            <td><span class="type-badge ${dep ? 'badge-deposit' : 'badge-expense'}">${dep ? 'إيداع' : 'صرف'}</span></td>
-            <td class="font-bold whitespace-nowrap" style="color:${dep ? '#059669' : '#dc2626'}">${dep ? '+' : '−'} ${formatCurrency(amt)}</td>
-        `;
-        movementsList.appendChild(row);
-    });
-    movementsEmpty.classList.toggle('hidden', list.length > 0);
-
-    const shownDeposit = sum(list, isDeposit);
-    const shownExpense = sum(list, m => !isDeposit(m));
-    const hasFilter = from || to || project;
-    if (hasFilter) {
-        logTotals.classList.remove('hidden');
-        document.getElementById('logDepositTotal').textContent = formatCurrency(shownDeposit);
-        document.getElementById('logExpenseTotal').textContent = formatCurrency(shownExpense);
-    } else {
-        logTotals.classList.add('hidden');
-    }
-}
-
-async function handleExpenseSubmit(e) {
-    e.preventDefault();
-    const amount = document.getElementById('expenseAmount').value;
-    const invoice = document.getElementById('expenseInvoice').value.trim();
-    const project = expenseProject.value;
-    const description = document.getElementById('expenseDesc').value.trim();
-    const date = document.getElementById('expenseDate').value;
-
-    if (!amount || Number(amount) <= 0) { showMessage('⚠️ أدخل مبلغ صحيح'); return; }
-    if (!description) { showMessage('⚠️ أدخل الوصف'); return; }
-    if (!confirm(`تسجيل صرف ${amount} ر.س ${description ? '— ' + description : ''}؟`)) return;
-
-    try {
-        await logAdvanceExpense({
-            date, amount: Number(amount), invoice, project, description,
-            supervisor: currentUsername, recordedBy: currentEmail
-        });
-        showMessage('✅ تم تسجيل الصرف');
-        document.getElementById('expenseAmount').value = '';
-        document.getElementById('expenseInvoice').value = '';
-        document.getElementById('expenseDesc').value = '';
-        expenseProject.value = '';
+        await setUserRole(username, role, currentEmail);
+        showMessage('✅ تم تحديث الرتبة');
         setTimeout(() => hideMessage(), 1200);
-        await loadMovements();
+        allUsers = await getUsers();
     } catch (err) {
-        showMessage('❌ فشل الحفظ: ' + err.message);
+        showMessage('❌ فشل التحديث: ' + err.message);
     }
 }
 
-async function handleDepositSubmit(e) {
+async function handleAddItemSubmit(e) {
     e.preventDefault();
-    const target = supervisorSelect.value;
-    const amount = document.getElementById('depositAmount').value;
-    const description = document.getElementById('depositDesc').value.trim();
-
-    if (!target) { showMessage('⚠️ اختر المشرف أولاً'); return; }
-    if (!amount || Number(amount) <= 0) { showMessage('⚠️ أدخل مبلغ صحيح'); return; }
-    if (!confirm(`إيداع ${amount} ر.س في عهدة "${target}"؟`)) return;
-
+    const name = document.getElementById('newItemName').value.trim();
+    if (!name) return;
     try {
-        await depositAdvance({
-            date: todayStr(), amount: Number(amount), description,
-            supervisor: target, recordedBy: currentEmail
-        });
-        showMessage('✅ تم الإيداع بنجاح');
-        document.getElementById('depositAmount').value = '';
-        document.getElementById('depositDesc').value = '';
+        await addCustodyItem(name, currentEmail);
+        showMessage('✅ تم إضافة البند');
+        document.getElementById('newItemName').value = '';
         setTimeout(() => hideMessage(), 1200);
-        await loadMovements();
+        const setup = await loadSetup();
+        if (setup) { populateItemSelect(); renderItemsList(); }
     } catch (err) {
-        showMessage('❌ فشل الإيداع: ' + err.message);
+        showMessage('❌ فشل الإضافة: ' + err.message);
     }
+}
+
+function renderItemsList() {
+    const box = document.getElementById('itemsListBox');
+    if (box) {
+        box.textContent = custodyItems.length ? 'البنود الحالية: ' + custodyItems.join('، ') : 'لا توجد بنود بعد';
+    }
+}
+
+function formatDate(dateStr) {
+    if (!dateStr) return '';
+    const d = new Date(dateStr);
+    if (isNaN(d)) return String(dateStr);
+    return d.toLocaleDateString('ar-EG', { day: '2-digit', month: '2-digit', year: 'numeric' });
 }

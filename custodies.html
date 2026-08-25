@@ -15,232 +15,211 @@
             <div>
                 <a href="home.html" class="back-link">→ رجوع للرئيسية</a>
                 <h1 class="text-2xl title-gradient">💰 العهد</h1>
-                <p id="headerSub" class="text-sm text-gray-500 mt-1">سجل صرف العهد ومتابعة المتبقي</p>
+                <p id="headerSub" class="text-sm text-gray-500 mt-1">كل مشروع له عهدة مستقلة — اختار المشروع لعرض عهدته</p>
             </div>
-            <button id="printBtn" class="px-5 py-2.5 btn-primary text-sm font-bold rounded-xl">
-                🖨️ طباعة السجل
-            </button>
         </div>
-        <h1 id="printTitle" class="text-xl font-bold text-indigo-900 mb-4 hidden">سجل العهدة</h1>
 
-        <!-- ═══ قسم الإدارة: إضافة إيداعات لأي مشرف (للأدمن فقط) ═══ -->
+        <!-- ═══ قسم الإدارة (للأدمن فقط) ═══ -->
         <div id="adminSection" class="section-card p-5 mb-6 hidden no-print" style="border:2px dashed rgba(30,60,114,0.25);">
             <div class="form-header mb-4">
                 <span class="form-header-icon" style="background:linear-gradient(135deg,#1e3c72,#2a5298);">⚙️</span>
                 <div class="flex-1">
-                    <h2 class="font-bold text-indigo-900 text-lg">إدارة العهدة (للمدير فقط)</h2>
-                    <p class="text-xs text-gray-500">إضافة إيداعات لأي مشرف</p>
+                    <h2 class="font-bold text-indigo-900 text-lg">إدارة (للمدير فقط)</h2>
+                    <p class="text-xs text-gray-500">إيداع عهدة، تعيين مشاريع، إضافة بنود، وتحديد رتب الموافقة</p>
                 </div>
             </div>
-            <form id="depositForm" class="grid grid-cols-1 sm:grid-cols-3 gap-4 items-end">
+
+            <!-- إيداع عهدة في مشروع لمشرف -->
+            <form id="depositForm" class="grid grid-cols-1 sm:grid-cols-4 gap-3 items-end mb-5">
                 <div>
-                    <label class="block text-sm font-semibold text-gray-700 mb-1.5">👤 المشرف</label>
-                    <select id="supervisorSelect" class="input-field px-3 py-2.5">
-                        <option value="">— اختر المشرف —</option>
-                    </select>
+                    <label class="block text-xs font-semibold text-gray-600 mb-1">👤 المشرف</label>
+                    <select id="depositSupervisor" class="input-field px-3 py-2 w-full"><option value="">— اختر —</option></select>
                 </div>
                 <div>
-                    <label class="block text-sm font-semibold text-gray-700 mb-1.5">💵 المبلغ (ر.س)</label>
-                    <input type="number" id="depositAmount" class="input-field px-3 py-2.5" min="0" step="0.01" required placeholder="0.00">
+                    <label class="block text-xs font-semibold text-gray-600 mb-1">📁 المشروع</label>
+                    <select id="depositProject" class="input-field px-3 py-2 w-full"><option value="">— اختر —</option></select>
                 </div>
                 <div>
-                    <label class="block text-sm font-semibold text-gray-700 mb-1.5">📝 الوصف</label>
-                    <div class="flex gap-2">
-                        <input type="text" id="depositDesc" class="input-field px-3 py-2.5 flex-1" placeholder="مثال: إيداع عهدة">
-                        <button type="submit" class="btn-primary px-5 font-bold whitespace-nowrap">إيداع ➕</button>
-                    </div>
+                    <label class="block text-xs font-semibold text-gray-600 mb-1">💵 المبلغ</label>
+                    <input type="number" id="depositAmount" class="input-field px-3 py-2 w-full" min="0" step="0.01" placeholder="0.00">
+                </div>
+                <div class="flex gap-2">
+                    <input type="text" id="depositDesc" class="input-field px-3 py-2 flex-1" placeholder="الوصف">
+                    <button type="submit" class="btn-primary px-4 font-bold whitespace-nowrap">إيداع ➕</button>
                 </div>
             </form>
 
-            <div class="mt-6 pt-6" style="border-top:2px dashed rgba(30,60,114,0.15);">
-                <div class="form-header mb-4">
-                    <span class="form-header-icon" style="background:linear-gradient(135deg,#7c3aed,#6d28d9);">📁</span>
-                    <div class="flex-1">
-                        <h2 class="font-bold text-indigo-900 text-lg">تعيين المشاريع</h2>
-                        <p class="text-xs text-gray-500">حدد المشاريع التي يراها المشرف المختار أعلاه — لو مفيش أي مشروع محدد، المشرف مش هيشوف أي مشروع خالص في تسجيل اليوميات (لازم تختار له مشروع واحد على الأقل)</p>
-                    </div>
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-5">
+                <!-- تعيين المشاريع -->
+                <div class="pt-4" style="border-top:2px dashed rgba(30,60,114,0.15);">
+                    <h3 class="font-bold text-indigo-900 text-sm mb-2">📁 تعيين مشاريع مشرف</h3>
+                    <select id="assignSupervisorSelect" class="input-field px-3 py-2 w-full mb-2"><option value="">— اختر المشرف —</option></select>
+                    <div id="projectAssignBox" class="text-xs text-gray-400 text-center py-2">اختر مشرف أولاٌ</div>
+                    <button id="saveProjectsBtn" type="button" class="btn-primary px-4 py-2 font-bold text-sm mt-2 hidden">💾 حفظ المشاريع</button>
                 </div>
-                <div id="projectAssignBox" class="text-sm text-gray-400 text-center py-3">اختر مشرف أولاً</div>
-                <button id="saveProjectsBtn" type="button" class="btn-primary px-5 py-2.5 font-bold mt-3 hidden">💾 حفظ المشاريع</button>
-            </div>
 
-            <!-- ═══ تفعيل مرحلة لمشروع ═══ -->
-            <div class="mt-6 pt-6" style="border-top:2px dashed rgba(30,60,114,0.15);">
-                <div class="form-header mb-4">
-                    <span class="form-header-icon" style="background:linear-gradient(135deg,#0891b2,#0e7490);">🏗️</span>
-                    <div class="flex-1">
-                        <h2 class="font-bold text-indigo-900 text-lg">تفعيل مرحلة لمشروع</h2>
-                        <p class="text-xs text-gray-500">المرحلة تظهر للمشرف في تسجيل اليوميات بس لو حالتها "شغالة" في شيت "بيانات المشاريع" — من هنا تقدر تضيف/تفعّل مرحلة من غير ما تفتح الشيت. عشان توقف مرحلة، امسح كلمة "شغالة" من عمود الحالة في الشيت مباشرة.</p>
-                    </div>
-                </div>
-                <form id="addProjectPhaseForm" class="grid grid-cols-1 sm:grid-cols-3 gap-3 items-end">
-                    <div>
-                        <label class="block text-xs font-semibold text-gray-600 mb-1">المشروع</label>
-                        <select id="phaseProjectSelect" class="input-field px-3 py-2 w-full" required>
-                            <option value="" disabled selected>اختر المشروع</option>
+                <!-- تحديد رتبة الموافقة -->
+                <div class="pt-4" style="border-top:2px dashed rgba(30,60,114,0.15);">
+                    <h3 class="font-bold text-indigo-900 text-sm mb-2">🎖️ تحديد رتبة مستخدم</h3>
+                    <p class="text-xs text-gray-400 mb-2">حوّل مشرف إلى "مهندس" عشان يقدر يوافق على اليوميات والعهد</p>
+                    <div class="flex gap-2">
+                        <select id="roleUserSelect" class="input-field px-3 py-2 flex-1"><option value="">— اختر —</option></select>
+                        <select id="roleSelect" class="input-field px-3 py-2 w-32">
+                            <option value="supervisor">مشرف</option>
+                            <option value="engineer">مهندس</option>
                         </select>
-                    </div>
-                    <div>
-                        <label class="block text-xs font-semibold text-gray-600 mb-1">اسم المرحلة</label>
-                        <input type="text" id="newProjectPhaseName" class="input-field px-3 py-2 w-full" placeholder="مثال: تشطيبات" required>
-                    </div>
-                    <button type="submit" class="btn-primary px-5 py-2.5 font-bold whitespace-nowrap">✅ تفعيل</button>
-                </form>
-                <div id="currentProjectPhasesBox" class="text-xs text-gray-500 mt-2"></div>
-            </div>
-
-            <!-- ═══ إدارة أنواع اليوميات ═══ -->
-            <div class="mt-6 pt-6" style="border-top:2px dashed rgba(30,60,114,0.15);">
-                <div class="form-header mb-4">
-                    <span class="form-header-icon" style="background:linear-gradient(135deg,#ea580c,#c2410c);">🧰</span>
-                    <div class="flex-1">
-                        <h2 class="font-bold text-indigo-900 text-lg">إدارة أنواع اليوميات</h2>
-                        <p class="text-xs text-gray-500">أضف نوع عمالة جديد (زي "حداد") أو عدّل سعر نوع موجود بنفس المعرف</p>
+                        <button id="saveRoleBtn" type="button" class="btn-primary px-4 py-2 font-bold text-sm">حفظ</button>
                     </div>
                 </div>
-                <form id="addTypeForm" class="grid grid-cols-1 sm:grid-cols-4 gap-3 items-end">
-                    <div>
-                        <label class="block text-xs font-semibold text-gray-600 mb-1">المعرف (إنجليزي)</label>
-                        <input type="text" id="newTypeId" class="input-field px-3 py-2 w-full" placeholder="blacksmith" required>
-                    </div>
-                    <div>
-                        <label class="block text-xs font-semibold text-gray-600 mb-1">الاسم</label>
-                        <input type="text" id="newTypeName" class="input-field px-3 py-2 w-full" placeholder="حداد" required>
-                    </div>
-                    <div>
-                        <label class="block text-xs font-semibold text-gray-600 mb-1">السعر الافتراضي</label>
-                        <input type="number" id="newTypePrice" class="input-field px-3 py-2 w-full" min="0" step="0.01" placeholder="0.00">
-                    </div>
-                    <div class="flex items-center justify-between gap-2">
-                        <label class="flex items-center gap-1.5 text-xs font-semibold text-gray-600 whitespace-nowrap">
-                            <input type="checkbox" id="newTypeCustom"> سعر يدوي
-                        </label>
-                        <button type="submit" class="btn-primary px-4 py-2.5 font-bold whitespace-nowrap text-sm">➕ حفظ</button>
-                    </div>
+            </div>
+
+            <!-- إضافة بند عهدة -->
+            <div class="pt-4 mt-4" style="border-top:2px dashed rgba(30,60,114,0.15);">
+                <h3 class="font-bold text-indigo-900 text-sm mb-2">🧾 إضافة بند عهدة</h3>
+                <p class="text-xs text-gray-400 mb-2">البنود دي بتظهر للمشرف في قائمة "البند" وقت تسجيل الفاتورة</p>
+                <form id="addItemForm" class="flex gap-2">
+                    <input type="text" id="newItemName" class="input-field px-3 py-2 flex-1" placeholder="مثال: مواد بناء" required>
+                    <button type="submit" class="btn-primary px-4 py-2 font-bold text-sm">➕ إضافة</button>
                 </form>
-                <div id="typesListBox" class="text-xs text-gray-500 mt-2"></div>
+                <div id="itemsListBox" class="text-xs text-gray-500 mt-2"></div>
             </div>
         </div>
 
-        <!-- ═══ كروت الملخص ═══ -->
-        <div id="summarySection" class="hidden">
+        <!-- ═══ اختيار المشروع ═══ -->
+        <div class="section-card p-5 mb-6 no-print">
+            <label class="block text-sm font-semibold text-gray-700 mb-2">📁 اختر المشروع لعرض عهدته</label>
+            <select id="custodyProjectSelect" class="input-field px-3 py-3 w-full">
+                <option value="" disabled selected>— اختر المشروع —</option>
+            </select>
+        </div>
+
+        <!-- ═══ محتوى العهدة (يظهر بعد اختيار المشروع) ═══ -->
+        <div id="custodyContent" class="hidden">
+            <!-- كروت الملخص -->
             <div class="grid grid-cols-1 sm:grid-cols-3 gap-4 mb-4">
                 <div class="stat-card stat-deposit">
                     <div class="stat-icon">🏦</div>
-                    <div class="stat-value" id="totalDeposit">0.00</div>
+                    <div class="stat-value" id="custTotalDeposit">0.00</div>
                     <div class="stat-label">إجمالي الإيداعات</div>
                 </div>
                 <div class="stat-card stat-expense">
                     <div class="stat-icon">💸</div>
-                    <div class="stat-value" id="totalExpense">0.00</div>
+                    <div class="stat-value" id="custTotalExpense">0.00</div>
                     <div class="stat-label">إجمالي الصرف</div>
                 </div>
-                <div class="stat-card stat-remaining" id="remainingCard">
+                <div class="stat-card stat-remaining" id="custRemainingCard">
                     <div class="stat-icon">🪙</div>
-                    <div class="stat-value" id="remaining">0.00</div>
+                    <div class="stat-value" id="custRemaining">0.00</div>
                     <div class="stat-label">المتبقي</div>
                 </div>
             </div>
-            <div id="negativeAlert" class="hidden mb-4 p-3 rounded-xl text-sm font-bold text-white text-center pulse-animation" style="background:linear-gradient(135deg,#f43f5e,#dc2626);">
+            <div id="custNegativeAlert" class="hidden mb-4 p-3 rounded-xl text-sm font-bold text-white text-center pulse-animation" style="background:linear-gradient(135deg,#f43f5e,#dc2626);">
                 ⚠️ المتبقي أقل من صفر — العهدة ناقصة!
             </div>
-        </div>
 
-        <!-- ═══ فورم صرف ═══ -->
-        <div class="section-card p-5 mb-6 no-print">
-            <div class="form-header mb-4">
-                <span class="form-header-icon" style="background:linear-gradient(135deg,#f43f5e,#dc2626);">🧾</span>
-                <div class="flex-1">
-                    <h2 class="font-bold text-indigo-900 text-lg">تسجيل صرف</h2>
-                    <p class="text-xs text-gray-500">سجل أي مبلغ تم صرفه من العهدة</p>
+            <!-- ═══ تسجيل فاتورة (سلة) ═══ -->
+            <div class="section-card p-5 mb-6 no-print">
+                <div class="form-header mb-4">
+                    <span class="form-header-icon" style="background:linear-gradient(135deg,#f43f5e,#dc2626);">🧾</span>
+                    <div class="flex-1">
+                        <h2 class="font-bold text-indigo-900 text-lg">تسجيل فاتورة عهدة</h2>
+                        <p class="text-xs text-gray-500">أضف أكتر من فاتورة للسلة وبعدين أرسلهم مرة واحدة للمهندس للموافقة</p>
+                    </div>
                 </div>
-            </div>
-            <form id="expenseForm" class="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                <div>
-                    <label class="block text-sm font-semibold text-gray-700 mb-1.5">📅 التاريخ</label>
-                    <input type="date" id="expenseDate" class="input-field px-3 py-2.5 w-full" required>
-                </div>
-                <div>
-                    <label class="block text-sm font-semibold text-gray-700 mb-1.5">💵 المبلغ (ر.س)</label>
-                    <input type="number" id="expenseAmount" class="input-field px-3 py-2.5 w-full" min="0" step="0.01" required placeholder="0.00">
-                </div>
-                <div>
-                    <label class="block text-sm font-semibold text-gray-700 mb-1.5">🧾 رقم الفاتورة</label>
-                    <input type="text" id="expenseInvoice" class="input-field px-3 py-2.5 w-full" placeholder="اختياري">
-                </div>
-                <div>
-                    <label class="block text-sm font-semibold text-gray-700 mb-1.5">📁 المشروع <span class="text-xs text-gray-400">(اختياري)</span></label>
-                    <select id="expenseProject" class="input-field px-3 py-2.5 w-full">
-                        <option value="">بدون مشروع</option>
-                    </select>
-                </div>
-                <div class="sm:col-span-2">
-                    <label class="block text-sm font-semibold text-gray-700 mb-1.5">📝 الوصف</label>
-                    <input type="text" id="expenseDesc" class="input-field px-3 py-2.5 w-full" placeholder="مثال: مواد تنظيف للموقع" required>
-                </div>
-                <div class="sm:col-span-2">
-                    <button type="submit" class="btn-primary w-full py-3 font-bold">💸 تسجيل الصرف</button>
-                </div>
-            </form>
-        </div>
 
-        <!-- ═══ الفلترة ═══ -->
-        <div class="section-card p-5 mb-6 no-print">
-            <div class="form-header mb-4">
-                <span class="form-header-icon" style="background:linear-gradient(135deg,#f59e0b,#d97706);">🔍</span>
-                <div class="flex-1">
-                    <h2 class="font-bold text-indigo-900 text-lg">فلترة السجل</h2>
-                    <p class="text-xs text-gray-500">صفي الحركات بالتاريخ أو المشروع</p>
+                <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                    <div>
+                        <label class="block text-sm font-semibold text-gray-700 mb-1.5">📅 التاريخ</label>
+                        <input type="date" id="invDate" class="input-field px-3 py-2.5 w-full">
+                    </div>
+                    <div>
+                        <label class="block text-sm font-semibold text-gray-700 mb-1.5">💵 القيمة (شاملة الضريبة)</label>
+                        <input type="number" id="invAmount" class="input-field px-3 py-2.5 w-full" min="0" step="0.01" placeholder="0.00">
+                    </div>
+                    <div>
+                        <label class="block text-sm font-semibold text-gray-700 mb-1.5">🏷️ البند</label>
+                        <select id="invItem" class="input-field px-3 py-2.5 w-full"><option value="">— اختر البند —</option></select>
+                    </div>
+                    <div>
+                        <label class="block text-sm font-semibold text-gray-700 mb-1.5">🏗️ المرحلة</label>
+                        <select id="invPhase" class="input-field px-3 py-2.5 w-full"><option value="">— اختر المرحلة —</option></select>
+                    </div>
+                    <div>
+                        <label class="block text-sm font-semibold text-gray-700 mb-1.5">🧾 رقم الفاتورة <span class="text-xs text-gray-400">(اختياري)</span></label>
+                        <input type="text" id="invInvoice" class="input-field px-3 py-2.5 w-full" placeholder="رقم الفاتورة">
+                    </div>
+                    <div class="flex items-center">
+                        <label class="flex items-center gap-2 text-sm font-semibold text-gray-700 cursor-pointer">
+                            <input type="checkbox" id="invIsTax" class="w-5 h-5">
+                            فاتورة ضريبية (15%)
+                        </label>
+                    </div>
+                    <div class="sm:col-span-2">
+                        <label class="block text-sm font-semibold text-gray-700 mb-1.5">📝 الوصف</label>
+                        <input type="text" id="invDesc" class="input-field px-3 py-2.5 w-full" placeholder="مثال: شراء أسمنت" required>
+                    </div>
                 </div>
-            </div>
-            <div class="grid grid-cols-1 sm:grid-cols-3 gap-4">
-                <div>
-                    <label class="block text-sm font-semibold text-gray-700 mb-1.5">من تاريخ</label>
-                    <input type="date" id="filterFrom" class="input-field px-3 py-2.5 w-full">
-                </div>
-                <div>
-                    <label class="block text-sm font-semibold text-gray-700 mb-1.5">إلى تاريخ</label>
-                    <input type="date" id="filterTo" class="input-field px-3 py-2.5 w-full">
-                </div>
-                <div>
-                    <label class="block text-sm font-semibold text-gray-700 mb-1.5">المشروع</label>
-                    <select id="filterProject" class="input-field px-3 py-2.5 w-full">
-                        <option value="">الكل</option>
-                    </select>
-                </div>
-            </div>
-        </div>
 
-        <!-- ═══ السجل ═══ -->
-        <div id="printArea" class="hidden">
-            <div id="printHeader" class="text-center mb-4 hidden">
-                <p class="text-lg font-bold text-gray-800">سجل حركات العهدة — <span id="printName"></span></p>
-                <p class="text-xs text-gray-500">EXO</p>
-                <p class="text-xs text-gray-400">التاريخ: <span id="printDateSpan"></span></p>
+                <!-- تفصيل الضريبة -->
+                <div id="taxBreakdown" class="hidden mt-4 p-3 rounded-xl" style="background:rgba(245,158,11,0.08); border:1px solid rgba(245,158,11,0.3);">
+                    <div class="grid grid-cols-3 gap-2 text-center text-sm">
+                        <div><div class="text-xs text-gray-500">الإجمالي</div><div class="font-bold text-amber-700" id="taxGross">0.00</div></div>
+                        <div><div class="text-xs text-gray-500">الضريبة (15%)</div><div class="font-bold text-red-600" id="taxValue">0.00</div></div>
+                        <div><div class="text-xs text-gray-500">الصافي</div><div class="font-bold text-emerald-600" id="taxNet">0.00</div></div>
+                    </div>
+                </div>
+
+                <button type="button" id="addInvoiceBtn" class="btn-secondary w-full py-3 font-bold mt-4">➕ إضافة للسلة</button>
+
+                <!-- السلة -->
+                <div class="mt-5 pt-4" style="border-top:2px dashed rgba(30,60,114,0.15);">
+                    <div class="flex justify-between items-center mb-3">
+                        <h3 class="text-sm font-bold text-gray-700">🧺 سلة الفواتير</h3>
+                        <span id="custCartCount" class="text-xs text-gray-400">0 فاتورة</span>
+                    </div>
+                    <div id="custCartList">
+                        <p class="text-center text-gray-400 text-sm py-3">لسه مفيش فواتير مضافة</p>
+                    </div>
+                    <div id="custCartTotal" class="hidden mt-3 pt-3 border-t border-gray-100 text-left">
+                        <span class="text-sm text-gray-500">الإجمالي: </span>
+                        <span id="custCartTotalValue" class="font-bold text-indigo-600"></span>
+                    </div>
+                    <button type="button" id="submitCustodyBtn" class="btn-primary w-full py-3.5 font-bold mt-3">✅ إرسال للموافقة</button>
+                </div>
             </div>
+
+            <!-- ═══ فواتيري بانتظار الموافقة ═══ -->
+            <div class="section-card p-5 mb-6 no-print">
+                <h2 class="font-bold text-indigo-900 mb-3">⏳ فواتيري قيد المراجعة</h2>
+                <div id="custPendingList">
+                    <p class="text-center text-gray-400 text-sm py-3">لا توجد فواتير قيد المراجعة</p>
+                </div>
+            </div>
+
+            <!-- ═══ سجل الحركات (الموافق عليها) ═══ -->
             <div class="section-card p-4 overflow-x-auto">
-                <h2 class="font-bold text-indigo-900 mb-3 no-print">📋 سجل الحركات</h2>
+                <h2 class="font-bold text-indigo-900 mb-3">📋 سجل حركات العهدة (الموافق عليها)</h2>
                 <table class="report-table">
                     <thead>
                         <tr>
                             <th>التاريخ</th>
-                            <th>المشروع</th>
-                            <th>الوصف</th>
-                            <th>رقم الفاتورة</th>
                             <th>النوع</th>
-                            <th>المبلغ</th>
+                            <th>البند</th>
+                            <th>الوصف</th>
+                            <th>ضريبية</th>
+                            <th>القيمة</th>
                         </tr>
                     </thead>
-                    <tbody id="movementsList"></tbody>
+                    <tbody id="custMovementsList"></tbody>
                 </table>
-                <div id="movementsEmpty" class="text-center text-gray-400 py-6 text-sm hidden">لا توجد حركات في هذه الفترة</div>
-                <div id="logTotals" class="mt-3 pt-3 border-t border-gray-100 hidden">
-                    <p class="text-sm text-gray-600">إيداعات في العرض: <b id="logDepositTotal" class="text-emerald-600"></b>
-                        &nbsp;|&nbsp; مصروف في العرض: <b id="logExpenseTotal" class="text-red-600"></b></p>
-                </div>
+                <div id="custMovementsEmpty" class="text-center text-gray-400 py-6 text-sm hidden">لا توجد حركات موافق عليها بعد</div>
             </div>
         </div>
 
+        <!-- تنبيه لو مفيش مشاريع -->
+        <div id="noProjectsWarning" class="hidden mb-5 p-4 rounded-xl text-sm font-bold text-white text-center" style="background:linear-gradient(135deg,#f43f5e,#dc2626);">
+            ⚠️ لا يوجد أي مشاريع مخصصة لك حاليًا. تواصل مع الأدمن.
+        </div>
     </div>
 
     <!-- مودال الرسائل -->
