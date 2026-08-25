@@ -11,7 +11,10 @@
     <div class="container p-6 md:p-8 w-full max-w-xl mx-auto fade-in">
         <div class="flex justify-between items-center mb-4">
             <a href="home.html" class="back-link" style="margin-bottom:0;">→ رجوع للرئيسية</a>
-            <button type="button" id="refreshBtn" class="btn-gray py-2 px-4 text-sm font-bold">🔄 تحديث البيانات</button>
+            <div class="flex gap-2">
+                <button type="button" id="printLogsBtn" class="print-btn py-2 px-4 text-sm font-bold">🖨️ طباعة السجل</button>
+                <button type="button" id="refreshBtn" class="btn-gray py-2 px-4 text-sm font-bold">🔄 تحديث البيانات</button>
+            </div>
         </div>
 
         <h1 class="text-2xl font-bold text-center mb-6" style="color:#1e3c72;">📝 تسجيل اليوميات</h1>
@@ -80,7 +83,10 @@
         <div class="section-card p-6 mt-5">
             <div class="flex justify-between items-center mb-3">
                 <h2 class="text-sm font-bold text-gray-700">🧾 بنود اليومية دي</h2>
-                <span id="cartCount" class="text-xs text-gray-400">0 بند</span>
+                <div class="flex items-center gap-2">
+                    <span id="cartCount" class="text-xs text-gray-400">0 بند</span>
+                    <button type="button" id="printCartBtn" class="print-btn py-1 px-3 text-xs font-bold">🖨️ طباعة</button>
+                </div>
             </div>
             <div id="cartList">
                 <p class="text-center text-gray-400 text-sm py-4">لسه مفيش بنود مضافة</p>
@@ -128,6 +134,8 @@
             <button id="closeMessageBtn" class="w-full py-2 px-4 btn-primary text-sm font-medium">إغلاق</button>
         </div>
     </div>
+
+    <div id="printArea" class="print-only"></div>
 
     <script type="module" src="daily-logs.js"></script>
 </body>

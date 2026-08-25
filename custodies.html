@@ -17,7 +17,10 @@
                 <h1 class="text-2xl title-gradient">💰 العهد</h1>
                 <p id="headerSub" class="text-sm text-gray-500 mt-1">كل مشروع له عهدة مستقلة — اختار المشروع لعرض عهدته</p>
             </div>
-            <button type="button" id="refreshBtn" class="btn-gray py-2 px-4 text-sm font-bold no-print">🔄 تحديث البيانات</button>
+            <div class="flex gap-2 no-print">
+                <button type="button" id="printLedgerBtn" class="print-btn py-2 px-4 text-sm font-bold">🖨️ طباعة كشف الحساب</button>
+                <button type="button" id="refreshBtn" class="btn-gray py-2 px-4 text-sm font-bold">🔄 تحديث البيانات</button>
+            </div>
         </div>
 
         <!-- ═══ قسم الإدارة (للأدمن فقط) ═══ -->
@@ -176,7 +179,10 @@
                 <div class="mt-5 pt-4" style="border-top:2px dashed rgba(30,60,114,0.15);">
                     <div class="flex justify-between items-center mb-3">
                         <h3 class="text-sm font-bold text-gray-700">🧺 سلة الفواتير</h3>
-                        <span id="custCartCount" class="text-xs text-gray-400">0 فاتورة</span>
+                        <div class="flex items-center gap-2">
+                            <span id="custCartCount" class="text-xs text-gray-400">0 فاتورة</span>
+                            <button type="button" id="printCartBtn" class="print-btn py-1 px-3 text-xs font-bold">🖨️ طباعة السلة</button>
+                        </div>
                     </div>
                     <div id="custCartList">
                         <p class="text-center text-gray-400 text-sm py-3">لسه مفيش فواتير مضافة</p>
@@ -230,6 +236,8 @@
             <button id="closeMessageBtn" class="w-full py-2 px-4 btn-primary text-sm font-medium">إغلاق</button>
         </div>
     </div>
+
+    <div id="printArea" class="print-only"></div>
 
     <script type="module" src="custodies.js"></script>
 </body>

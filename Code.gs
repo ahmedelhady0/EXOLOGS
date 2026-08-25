@@ -709,7 +709,7 @@ function handleLogDailyLog(body) {
       id,
       body.date || now,
       body.project || '',
-      body.phase || '',
+      String(item.phase || body.phase || '').trim(),
       item.typeId || '',
       item.typeName || '',
       parseFloat(item.quantity) || 0,

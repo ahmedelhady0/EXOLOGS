@@ -3,7 +3,7 @@
 // المشرف يسجل فواتير (سلة) → تروح للمهندس للموافقة
 // الأدمن يودع مباشرة، يعيّن مشاريع، يضيف بنود، ويحدد الرتب
 // ═══════════════════════════════════════════════════════════
-import { auth, showMessage, hideMessage, todayStr, formatCurrency } from './firebase-config.js';
+import { auth, showMessage, hideMessage, todayStr, formatCurrency, printReport } from './firebase-config.js';
 import { onAuthStateChanged } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
 import {
     getUserRole, getSetupData, getUsers, getProjectCustody, getMyCustodyRequests,
@@ -29,6 +29,8 @@ const invDesc = document.getElementById('invDesc');
 const taxBreakdown = document.getElementById('taxBreakdown');
 const addInvoiceBtn = document.getElementById('addInvoiceBtn');
 const submitCustodyBtn = document.getElementById('submitCustodyBtn');
+const printLedgerBtn = document.getElementById('printLedgerBtn');
+const printCartBtn = document.getElementById('printCartBtn');
 
 closeMessageBtn?.addEventListener('click', hideMessage);
 refreshBtn?.addEventListener('click', refreshData);
@@ -45,6 +47,8 @@ let vatRate = 0.15;
 let allUsers = [];
 let selectedProject = '';
 let cart = []; // سلة الفواتير قبل الإرسال
+let lastSummary = {};   // آخر ملخص عهدة محمّل (للطباعة)
+let lastMovements = []; // آخر حركات محمّلة (للطباعة)
 
 onAuthStateChanged(auth, async (user) => {
     if (!user) { window.location.href = 'index.html'; return; }
@@ -86,6 +90,8 @@ onAuthStateChanged(auth, async (user) => {
     invIsTax.addEventListener('change', updateTaxBreakdown);
     addInvoiceBtn.addEventListener('click', handleAddInvoice);
     submitCustodyBtn.addEventListener('click', handleSubmitCustody);
+    printLedgerBtn?.addEventListener('click', handlePrintLedger);
+    printCartBtn?.addEventListener('click', handlePrintCart);
 });
 
 async function loadSetup(forceRefresh = false) {
@@ -188,8 +194,10 @@ async function loadProjectCustody() {
         // المشرف يشوف حركاته بس، الأدمن يشوف كل حركات المشروع
         const supervisor = isAdmin ? '' : currentUsername;
         const data = await getProjectCustody(selectedProject, supervisor || null);
-        renderSummary(data.summary || {});
-        renderMovements(data.movements || []);
+        lastSummary = data.summary || {};
+        lastMovements = data.movements || [];
+        renderSummary(lastSummary);
+        renderMovements(lastMovements);
     } catch (err) {
         console.error(err);
     }
@@ -392,6 +400,71 @@ async function handleSubmitCustody() {
         submitCustodyBtn.disabled = false;
         submitCustodyBtn.textContent = '✅ إرسال للموافقة';
     }
+}
+
+// ── طباعة كشف حساب العهدة (الحركات المعتمدة) ───────────
+function handlePrintLedger() {
+    if (!selectedProject) { showMessage('⚠️ اختر المشروع أولاً لطباعة كشف حسابه'); return; }
+
+    const rows = lastMovements.map(m => {
+        const isDeposit = m.type === 'إيداع عهدة';
+        const amt = Number(m.amount) || 0;
+        return [
+            formatDate(m.date),
+            isDeposit ? 'إيداع' : 'صرف',
+            m.item || '-',
+            m.description || '-',
+            (m.isTax === 'نعم' || m.isTax === true) ? 'نعم' : '—',
+            (isDeposit ? '+ ' : '− ') + formatCurrency(amt)
+        ];
+    });
+
+    printReport({
+        title: 'كشف حساب عهدة مشروع',
+        subtitle: selectedProject,
+        metaLines: [
+            `المشرف: ${isAdmin ? 'كل المشرفين' : currentUsername}`,
+            `تاريخ الطباعة: ${new Date().toLocaleDateString('ar-EG', { year: 'numeric', month: 'long', day: 'numeric' })}`,
+            `إجمالي الإيداعات: ${formatCurrency(lastSummary.totalDeposit || 0)}`,
+            `إجمالي الصرف: ${formatCurrency(lastSummary.totalExpense || 0)}`,
+            `المتبقي: ${formatCurrency(lastSummary.remaining || 0)}`
+        ],
+        columns: ['التاريخ', 'النوع', 'البند', 'الوصف', 'ضريبية', 'القيمة'],
+        rows,
+        totalsRow: ['', '', '', '', 'المتبقي', formatCurrency(lastSummary.remaining || 0)],
+        emptyText: 'لا توجد حركات معتمدة بعد لهذا المشروع'
+    });
+}
+
+// ── طباعة سلة الفواتير الحالية (قبل إرسالها للموافقة) ────
+// مفيدة عشان المشرف يطبع/يحفظ PDF لفواتيره أول ما يخلص إدخالها
+function handlePrintCart() {
+    if (!selectedProject) { showMessage('⚠️ اختر المشروع أولاً'); return; }
+    if (!cart.length) { showMessage('⚠️ لا توجد فواتير في السلة للطباعة'); return; }
+
+    const rows = cart.map(c => [
+        formatDate(c.date),
+        c.item || '-',
+        c.phase || '-',
+        c.description,
+        c.isTax ? 'نعم' : '—',
+        c.invoice || '-',
+        formatCurrency(c.amount)
+    ]);
+    const total = cart.reduce((s, c) => s + c.amount, 0);
+
+    printReport({
+        title: 'كشف فواتير عهدة (قبل الإرسال للموافقة)',
+        subtitle: selectedProject,
+        metaLines: [
+            `المشرف: ${currentUsername}`,
+            `عدد الفواتير: ${cart.length}`,
+            `تاريخ الطباعة: ${new Date().toLocaleDateString('ar-EG', { year: 'numeric', month: 'long', day: 'numeric' })}`
+        ],
+        columns: ['التاريخ', 'البند', 'المرحلة', 'الوصف', 'ضريبية', 'رقم الفاتورة', 'القيمة'],
+        rows,
+        totalsRow: ['', '', '', '', '', 'الإجمالي', formatCurrency(total)]
+    });
 }
 
 // ═══════════════════════════════════════════════════════════

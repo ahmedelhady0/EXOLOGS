@@ -24,6 +24,9 @@ export const storage = getStorage(app);
 export const appId = 'exo-system';
 export const adminUsername = "admin";
 
+// اسم الشركة اللي بيظهر في ترويسة التقارير المطبوعة — غيّره لاسم شركتك
+export const companyName = "EXO";
+
 // ═══════════════════════════════════════════════════════════
 // دوال مساعدة مشتركة
 // ═══════════════════════════════════════════════════════════
@@ -60,4 +63,72 @@ export function formatDate(ts) {
 
 export function formatCurrency(amount) {
     return Number(amount).toLocaleString('ar-EG') + ' ر.س';
+}
+
+// ═══════════════════════════════════════════════════════════
+// طباعة تقرير احترافي (كشف عهدة / سجل يوميات) — عبر معاينة طباعة
+// المتصفح، والمستخدم يقدر يحفظه PDF مباشرة من نافذة الطباعة
+// (اختر "حفظ كـ PDF" بدل الطابعة). مفيش حاجة تتحمّل ولا مكتبات؛
+// شغالة بالعربي وبالـ RTL صح 100% لأنها بتستخدم نفس صفحة الموقع.
+//
+// title: عنوان التقرير، subtitle: نص فرعي (مثلاً اسم المشروع)
+// metaLines: مصفوفة سطور تفاصيل تظهر يمين الترويسة (تاريخ، مشرف، إجماليات...)
+// columns: أسماء الأعمدة، rows: مصفوفة صفوف (كل صف = مصفوفة نصوص)
+// totalsRow: صف إجمالي اختياري يظهر في أسفل الجدول
+// showSignatures: يظهر خانات توقيع (مشرف/مهندس/إدارة) في آخر الصفحة
+// ═══════════════════════════════════════════════════════════
+export function printReport({
+    title, subtitle = '', metaLines = [], columns = [], rows = [],
+    totalsRow = null, showSignatures = true, emptyText = 'لا توجد بيانات'
+}) {
+    let area = document.getElementById('printArea');
+    if (!area) {
+        area = document.createElement('div');
+        area.id = 'printArea';
+        area.className = 'print-only';
+        document.body.appendChild(area);
+    }
+
+    const rowsHtml = rows.length
+        ? rows.map(r => `<tr>${r.map(c => `<td>${c ?? '-'}</td>`).join('')}</tr>`).join('')
+        : `<tr><td colspan="${columns.length}" style="padding:16px;color:#999;">${emptyText}</td></tr>`;
+
+    const totalsHtml = (totalsRow && rows.length)
+        ? `<tfoot><tr>${totalsRow.map(c => `<td>${c ?? ''}</td>`).join('')}</tr></tfoot>`
+        : '';
+
+    const metaHtml = metaLines.filter(Boolean).join('<br>');
+
+    const signaturesHtml = showSignatures ? `
+        <div class="print-signatures">
+            <div class="sig"><div class="line">توقيع المشرف</div></div>
+            <div class="sig"><div class="line">توقيع المهندس / المكتب الفني</div></div>
+            <div class="sig"><div class="line">اعتماد الإدارة</div></div>
+        </div>
+    ` : '';
+
+    area.innerHTML = `
+        <div class="print-report">
+            <div class="print-letterhead">
+                <div>
+                    <div class="company-name">🏗️ ${companyName}</div>
+                    <div class="report-title">${title}${subtitle ? ' — ' + subtitle : ''}</div>
+                </div>
+                <div class="report-meta">${metaHtml}</div>
+            </div>
+            <table>
+                <thead><tr>${columns.map(c => `<th>${c}</th>`).join('')}</tr></thead>
+                <tbody>${rowsHtml}</tbody>
+                ${totalsHtml}
+            </table>
+            ${signaturesHtml}
+            <div class="print-footer">تم إنشاء هذا التقرير آلياً من نظام ${companyName} — ${new Date().toLocaleString('ar-EG')}</div>
+        </div>
+    `;
+
+    // اسم الملف المقترح لو المستخدم اختار "حفظ كـ PDF" من نافذة الطباعة
+    const prevTitle = document.title;
+    document.title = `${title}${subtitle ? '-' + subtitle : ''}`.replace(/\s+/g, '_');
+    window.print();
+    setTimeout(() => { document.title = prevTitle; }, 800);
 }

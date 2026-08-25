@@ -3,7 +3,7 @@
 // المشرف يقدر يضيف أكتر من بند (نوع + كمية) في نفس التسجيل، وكلهم بيتسجلوا
 // تحت نفس الـ ID. المرحلة بتتحدد حسب المشروع المختار (من شيت "بيانات المشاريع")
 // ═══════════════════════════════════════════════════════════
-import { auth, showMessage, hideMessage, todayStr, formatCurrency } from './firebase-config.js';
+import { auth, showMessage, hideMessage, todayStr, formatCurrency, printReport } from './firebase-config.js';
 import { onAuthStateChanged } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
 import { getSetupData, logDailyLog, getDailyLogs, getMyDailyLogRequests, getUserRole } from './sheets-service.js';
 
@@ -32,6 +32,8 @@ const closeMessageBtn = document.getElementById('closeMessageBtn');
 const noProjectsWarning = document.getElementById('noProjectsWarning');
 const loggingFormSections = document.getElementById('loggingFormSections');
 const refreshBtn = document.getElementById('refreshBtn');
+const printCartBtn = document.getElementById('printCartBtn');
+const printLogsBtn = document.getElementById('printLogsBtn');
 
 closeMessageBtn?.addEventListener('click', hideMessage);
 refreshBtn?.addEventListener('click', refreshData);
@@ -45,6 +47,7 @@ let assignedProjects = []; // المشاريع المخصصة للمشرف ال�
 let dailyLogTypes = []; // أنواع اليوميات (id/اسم/سعر/سعر يدوي) — من شيت "أسعار اليوميات"
 let projectPhases = {}; // المراحل الشغالة لكل مشروع — من شيت "بيانات المشاريع" (المرحلة اللي حالتها مش "شغالة" ما بتظهرش)
 let cart = []; // البنود المضافة قبل الحفظ النهائي — كلها بتتسجل مع بعض بمعرف واحد
+let lastLogs = []; // آخر سجل يوميات معتمدة اتحمّل (للطباعة)
 
 onAuthStateChanged(auth, async (user) => {
     if (!user) { window.location.href = 'index.html'; return; }
@@ -68,7 +71,8 @@ onAuthStateChanged(auth, async (user) => {
     }
 
     if (setupData) applySetupData(setupData, roleLoadFailed);
-    renderRecentLogs(logsData || []);
+    lastLogs = logsData || [];
+    renderRecentLogs(lastLogs);
     renderPendingLogs(pendingData || []);
 
     logProject.addEventListener('change', updatePhaseOptions);
@@ -77,6 +81,8 @@ onAuthStateChanged(auth, async (user) => {
     logCustomPrice.addEventListener('input', calculateItemTotal);
     addItemBtn.addEventListener('click', handleAddItem);
     submitBtn.addEventListener('click', handleSubmitBatch);
+    printCartBtn?.addEventListener('click', handlePrintCart);
+    printLogsBtn?.addEventListener('click', handlePrintLogs);
 });
 
 function applySetupData(data, roleLoadFailed) {
@@ -314,7 +320,8 @@ async function handleSubmitBatch() {
 async function loadRecentLogs() {
     try {
         const logs = await getDailyLogs(currentUsername);
-        renderRecentLogs(logs || []);
+        lastLogs = logs || [];
+        renderRecentLogs(lastLogs);
     } catch (err) {
         console.error(err);
         recentLogs.innerHTML = '<p class="text-center text-red-500 text-sm">فشل تحميل السجل</p>';
@@ -418,6 +425,65 @@ function renderRecentLogs(logs) {
         console.error(err);
         recentLogs.innerHTML = '<p class="text-center text-red-500 text-sm">فشل تحميل السجل</p>';
     }
+}
+
+// ── طباعة بنود اليومية الحالية (قبل الحفظ والإرسال للموافقة) ──
+function handlePrintCart() {
+    if (!cart.length) { showMessage('⚠️ أضف بند واحد على الأقل قبل الطباعة'); return; }
+
+    const rows = cart.map(i => [
+        i.typeName, i.phase, i.quantity, formatCurrency(i.unitPrice), formatCurrency(i.totalCost)
+    ]);
+    const total = cart.reduce((s, i) => s + i.totalCost, 0);
+
+    printReport({
+        title: 'يومية عمالة (قبل الإرسال للموافقة)',
+        subtitle: logProject.value || '',
+        metaLines: [
+            `المشرف: ${currentUsername}`,
+            `التاريخ: ${formatDate(logDate.value)}`,
+            `عدد البنود: ${cart.length}`
+        ],
+        columns: ['النوع', 'المرحلة', 'الكمية', 'سعر الوحدة', 'الإجمالي'],
+        rows,
+        totalsRow: ['', '', '', 'الإجمالي الكلي', formatCurrency(total)]
+    });
+}
+
+// ── طباعة سجل اليوميات الموافق عليها (آخر 30 يومية) ──────────
+function handlePrintLogs() {
+    if (!lastLogs.length) { showMessage('⚠️ لا يوجد سجل يوميات موافق عليه بعد'); return; }
+
+    const batches = [];
+    const idx = {};
+    lastLogs.forEach(l => {
+        const key = l.batchId || l.id;
+        if (!idx[key]) { idx[key] = { date: l.date, project: l.project, items: [] }; batches.push(idx[key]); }
+        idx[key].items.push(l);
+    });
+
+    const rows = [];
+    let grandTotal = 0;
+    batches.slice(0, 30).forEach(b => {
+        b.items.forEach(i => {
+            const cost = Number(i.totalCost) || 0;
+            grandTotal += cost;
+            rows.push([formatDate(b.date), b.project, i.typeName, i.phase, i.quantity, formatCurrency(cost)]);
+        });
+    });
+
+    printReport({
+        title: 'سجل اليوميات المعتمدة',
+        subtitle: isAdmin ? '' : currentUsername,
+        metaLines: [
+            `المشرف: ${currentUsername}`,
+            `عدد اليوميات: ${batches.length}`,
+            `تاريخ الطباعة: ${new Date().toLocaleDateString('ar-EG', { year: 'numeric', month: 'long', day: 'numeric' })}`
+        ],
+        columns: ['التاريخ', 'المشروع', 'النوع', 'المرحلة', 'الكمية', 'التكلفة'],
+        rows,
+        totalsRow: ['', '', '', '', 'الإجمالي', formatCurrency(grandTotal)]
+    });
 }
 
 function formatDate(dateStr) {

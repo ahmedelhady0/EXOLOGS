@@ -383,3 +383,104 @@ body {
 
 .pulse-animation { animation: pulse 2s infinite; }
 @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.7; } }
+
+/* ══════════════════════════════════════════════════════════
+   طباعة احترافية (كشف حساب عهدة / سجل يوميات) — PDF عبر المتصفح
+   ══════════════════════════════════════════════════════════ */
+.print-only { display: none; }
+
+.print-btn {
+    background: linear-gradient(135deg, #334155 0%, #1e293b 100%);
+    border: none;
+    border-radius: 12px;
+    color: white;
+    font-weight: 600;
+    transition: all 0.3s ease;
+    cursor: pointer;
+}
+.print-btn:hover { transform: translateY(-2px); box-shadow: 0 15px 30px rgba(30, 41, 59, 0.35); }
+
+@media print {
+    @page { size: A4; margin: 14mm 12mm; }
+
+    html, body { background: #fff !important; }
+
+    /* اخفِ كل حاجة في الصفحة، وأظهر منطقة الطباعة بس */
+    body * { visibility: hidden; }
+    #printArea, #printArea * { visibility: visible; }
+    #printArea {
+        display: block !important;
+        position: absolute;
+        inset: 0;
+        width: 100%;
+        margin: 0;
+        padding: 0;
+        background: #fff;
+    }
+
+    .print-report {
+        font-family: 'Cairo', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+        direction: rtl;
+        color: #111;
+        padding: 4mm;
+    }
+
+    .print-letterhead {
+        display: flex;
+        justify-content: space-between;
+        align-items: flex-start;
+        border-bottom: 3px solid #1e3c72;
+        padding-bottom: 10px;
+        margin-bottom: 16px;
+    }
+    .print-letterhead .company-name {
+        font-size: 20px;
+        font-weight: 800;
+        color: #1e3c72;
+    }
+    .print-letterhead .report-title { font-size: 13px; color: #444; margin-top: 3px; }
+    .print-letterhead .report-meta {
+        text-align: left;
+        font-size: 11px;
+        color: #333;
+        line-height: 1.9;
+        white-space: nowrap;
+    }
+
+    .print-report table { width: 100%; border-collapse: collapse; font-size: 11px; margin-top: 4px; }
+    .print-report th {
+        background: #1e3c72 !important;
+        color: #fff !important;
+        -webkit-print-color-adjust: exact; print-color-adjust: exact;
+        padding: 7px 5px;
+        text-align: center;
+        border: 1px solid #1e3c72;
+    }
+    .print-report td { padding: 6px 5px; border: 1px solid #ccc; text-align: center; }
+    .print-report tbody tr:nth-child(even) {
+        background: #f5f7fa !important;
+        -webkit-print-color-adjust: exact; print-color-adjust: exact;
+    }
+    .print-report tfoot td {
+        font-weight: 800;
+        background: #eef2f7 !important;
+        -webkit-print-color-adjust: exact; print-color-adjust: exact;
+    }
+    .print-report tr { page-break-inside: avoid; }
+
+    .print-signatures {
+        display: flex;
+        justify-content: space-between;
+        margin-top: 46px;
+        page-break-inside: avoid;
+    }
+    .print-signatures .sig { width: 30%; text-align: center; font-size: 11px; color: #333; }
+    .print-signatures .sig .line { border-top: 1.5px solid #333; margin-top: 40px; padding-top: 6px; }
+
+    .print-footer {
+        margin-top: 16px;
+        font-size: 9px;
+        color: #999;
+        text-align: center;
+    }
+}
