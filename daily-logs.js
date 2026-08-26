@@ -34,6 +34,14 @@ const refreshBtn = document.getElementById('refreshBtn');
 const printCartBtn = document.getElementById('printCartBtn');
 const printLogsBtn = document.getElementById('printLogsBtn');
 const bottomNavApprovals = document.getElementById('bottomNavApprovals');
+const filterDailyFrom = document.getElementById('filterDailyFrom');
+const filterDailyTo = document.getElementById('filterDailyTo');
+const filterDailyProject = document.getElementById('filterDailyProject');
+const printShownBtn = document.getElementById('printShownBtn');
+const printSelectedBtn = document.getElementById('printSelectedBtn');
+const selectedCountEl = document.getElementById('selectedCount');
+const shownCountEl = document.getElementById('shownCount');
+const dailySelectAllVisible = document.getElementById('dailySelectAllVisible');
 
 refreshBtn?.addEventListener('click', refreshData);
 
@@ -47,6 +55,9 @@ let dailyLogTypes = []; // أنواع اليوميات (id/اسم/سعر/سعر 
 let projectPhases = {}; // المراحل الشغالة لكل مشروع — من شيت "بيانات المشاريع" (المرحلة اللي حالتها مش "شغالة" ما بتظهرش)
 let cart = []; // البنود المضافة قبل الحفظ النهائي — كلها بتتسجل مع بعض بمعرف واحد
 let lastLogs = []; // آخر سجل يوميات معتمدة اتحمّل (للطباعة)
+let allDailyBatches = []; // كل دفعات اليوميات المبنية من lastLogs (قبل الفلترة)
+let filteredDailyBatches = []; // الدفعات بعد تطبيق الفلترة (اللي هتتعرّض للمستخدم)
+const selectedLogBatches = new Set(); // معرفات الدفعات المحددة للطباعة الجماعية
 
 onAuthStateChanged(auth, async (user) => {
     if (!user) { window.location.href = 'index.html'; return; }
@@ -75,7 +86,7 @@ onAuthStateChanged(auth, async (user) => {
 
     if (setupData) applySetupData(setupData, roleLoadFailed);
     lastLogs = logsData || [];
-    renderRecentLogs(lastLogs);
+    renderRecentLogs();
     renderPendingLogs(pendingData || []);
 
     logProject.addEventListener('change', updatePhaseOptions);
@@ -86,6 +97,12 @@ onAuthStateChanged(auth, async (user) => {
     submitBtn.addEventListener('click', handleSubmitBatch);
     printCartBtn?.addEventListener('click', handlePrintCart);
     printLogsBtn?.addEventListener('click', handlePrintLogs);
+    filterDailyFrom?.addEventListener('input', applyDailyFilters);
+    filterDailyTo?.addEventListener('input', applyDailyFilters);
+    filterDailyProject?.addEventListener('change', applyDailyFilters);
+    dailySelectAllVisible?.addEventListener('change', handleSelectAllVisible);
+    printShownBtn?.addEventListener('click', handlePrintShown);
+    printSelectedBtn?.addEventListener('click', handlePrintSelected);
 });
 
 function applySetupData(data, roleLoadFailed) {
@@ -110,6 +127,12 @@ function applySetupData(data, roleLoadFailed) {
 
     logProject.innerHTML = '<option value="" disabled selected>اختر المشروع</option>' +
         visibleProjects.map(p => `<option value="${p}">${p}</option>`).join('');
+
+    // فلتر السجل: نفس قائمة المشاريع المرئية + "الكل"
+    if (filterDailyProject) {
+        filterDailyProject.innerHTML = '<option value="">الكل</option>' +
+            visibleProjects.map(p => `<option value="${p}">${p}</option>`).join('');
+    }
 
     // المرحلة بتتحدد لما تختار المشروع (كل مشروع له مراحله الشغالة بس من شيت "بيانات المشاريع")
     updatePhaseOptions();
@@ -323,7 +346,7 @@ async function loadRecentLogs() {
     try {
         const logs = await getDailyLogs(currentUsername);
         lastLogs = logs || [];
-        renderRecentLogs(lastLogs);
+        renderRecentLogs();
     } catch (err) {
         console.error(err);
         recentLogs.innerHTML = '<p class="text-center text-red-500 text-sm">فشل تحميل السجل</p>';
@@ -388,38 +411,73 @@ function renderPendingLogs(logs) {
     }
 }
 
-function renderRecentLogs(logs) {
+// ── سجل اليوميات الموافق عليها: فلترة + طباعة (فردية/مجموعة/الظاهر) ──
+function renderRecentLogs() {
     try {
-        if (!logs || logs.length === 0) {
-            recentLogs.innerHTML = '<p class="text-center text-gray-500 text-sm">لا توجد يوميات موافق عليها بعد</p>';
-            return;
-        }
+        allDailyBatches = buildDailyBatches(lastLogs);
+        applyDailyFilters(); // بيبنّي filteredDailyBatches ويحدّث الواجهة
+    } catch (err) {
+        console.error(err);
+        recentLogs.innerHTML = '<p class="text-center text-red-500 text-sm">فشل تحميل السجل</p>';
+    }
+}
 
-        // تجميع البنود حسب نفس الـ id عشان كل تسجيل يظهر سوا (بند/بندين/تلاتة..)
-        const batches = [];
-        const batchIndex = {};
-        logs.forEach(l => {
-            const key = l.batchId || l.id; // سجلات قديمة قبل توحيد العمودين لسه بتتجمع صح عن طريق batchId
-            if (!batchIndex[key]) {
-                batchIndex[key] = { date: l.date, project: l.project, phase: l.phase, items: [] };
-                batches.push(batchIndex[key]);
-            }
-            batchIndex[key].items.push(l);
-        });
+function buildDailyBatches(logs) {
+    const batches = [];
+    const idx = {};
+    (logs || []).forEach(l => {
+        const key = l.batchId || l.id;
+        if (!idx[key]) { idx[key] = { batchId: key, date: l.date, project: l.project, items: [] }; batches.push(idx[key]); }
+        idx[key].items.push(l);
+    });
+    // ترتيب تنازلي حسب التاريخ
+    batches.sort((a, b) => new Date(b.date || 0) - new Date(a.date || 0));
+    return batches;
+}
 
-        const recentBatches = batches.slice(0, 10);
+function applyDailyFilters() {
+    const from = filterDailyFrom?.value;
+    const to = filterDailyTo?.value;
+    const project = filterDailyProject?.value || '';
 
-        recentLogs.innerHTML = recentBatches.map(b => {
-            const batchTotal = b.items.reduce((s, i) => s + (Number(i.totalCost) || 0), 0);
-            const allPrinted = b.items.every(i => i.printed);
-            const statusBadge = allPrinted
-                ? '<span class="type-badge badge-deposit">مطبوعة</span>'
-                : '<span class="type-badge badge-pending">جديدة</span>';
-            return `
-                <div class="p-4 mb-3 rounded-xl" style="border:1px solid rgba(30,60,114,0.12); background:rgba(255,255,255,0.6);">
-                    <div class="flex justify-between items-center mb-2">
+    filteredDailyBatches = allDailyBatches.filter(b => {
+        if (project && b.project !== project) return false;
+        if (from && new Date(b.date || 0) < new Date(from)) return false;
+        if (to && new Date(b.date || 0) > new Date(to)) return false;
+        return true;
+    });
+
+    renderFilteredBatches();
+}
+
+function renderFilteredBatches() {
+    selectedLogBatches.clear(); // بمسح التحديد عشان الدفعات اتغيّرت
+    updateDailyPrintToolbar();
+
+    if (!filteredDailyBatches.length) {
+        recentLogs.innerHTML = '<p class="text-center text-gray-400 text-sm py-4">لا توجد يوميات في هذا النطاق</p>';
+        shownCountEl.textContent = '';
+        return;
+    }
+
+    shownCountEl.textContent = `الظاهر: ${filteredDailyBatches.length} دفعة`;
+
+    recentLogs.innerHTML = filteredDailyBatches.map(b => {
+        const batchTotal = b.items.reduce((s, i) => s + (Number(i.totalCost) || 0), 0);
+        const allPrinted = b.items.every(i => i.printed);
+        const statusBadge = allPrinted
+            ? '<span class="type-badge badge-deposit">مطبوعة</span>'
+            : '<span class="type-badge badge-pending">جديدة</span>';
+        return `
+            <div class="p-4 mb-3 rounded-xl flex gap-3" style="border:1px solid rgba(30,60,114,0.12); background:rgba(255,255,255,0.6);">
+                <input type="checkbox" class="log-batch-select mt-1" data-batch="${b.batchId}">
+                <div class="flex-1">
+                    <div class="flex flex-wrap justify-between items-center mb-2">
                         <span class="text-sm font-bold text-indigo-900">${formatDate(b.date)} — ${b.project}</span>
-                        ${statusBadge}
+                        <div class="flex items-center gap-2">
+                            ${statusBadge}
+                            <button type="button" onclick="printDailyBatch('${b.batchId}')" class="print-btn py-1 px-2 text-xs font-bold no-print">🖨️</button>
+                        </div>
                     </div>
                     <div class="flex flex-wrap gap-2">
                         ${b.items.map(i => `<span class="type-badge badge-daily">${i.typeName} × ${i.quantity} — ${i.phase}</span>`).join('')}
@@ -428,13 +486,95 @@ function renderRecentLogs(logs) {
                         <span class="font-bold text-indigo-600 text-sm">${formatCurrency(batchTotal)}</span>
                     </div>
                 </div>
-            `;
-        }).join('');
-    } catch (err) {
-        console.error(err);
-        recentLogs.innerHTML = '<p class="text-center text-red-500 text-sm">فشل تحميل السجل</p>';
-    }
+            </div>
+        `;
+    }).join('');
+
+    // ربط تغيّر الـ checkbox بكل دفعة
+    recentLogs.querySelectorAll('.log-batch-select').forEach(cb => {
+        cb.addEventListener('change', () => {
+            if (cb.checked) selectedLogBatches.add(cb.dataset.batch); else selectedLogBatches.delete(cb.dataset.batch);
+            syncDailySelectAllCheckbox();
+            updateDailyPrintToolbar();
+        });
+    });
 }
+
+function updateDailyPrintToolbar() {
+    const n = filteredDailyBatches.length;
+    if (dailySelectAllVisible) dailySelectAllVisible.checked = n > 0 && selectedLogBatches.size === n;
+    if (selectedCountEl) selectedCountEl.textContent = selectedLogBatches.size;
+    if (printSelectedBtn) printSelectedBtn.disabled = selectedLogBatches.size === 0;
+    if (printShownBtn) printShownBtn.disabled = n === 0;
+}
+
+function syncDailySelectAllCheckbox() {
+    if (!dailySelectAllVisible) return;
+    dailySelectAllVisible.checked = filteredDailyBatches.length > 0 && selectedLogBatches.size === filteredDailyBatches.length;
+}
+
+function handleSelectAllVisible() {
+    if (dailySelectAllVisible.checked) {
+        filteredDailyBatches.forEach(b => selectedLogBatches.add(b.batchId));
+    } else {
+        selectedLogBatches.clear();
+    }
+    // حدّث الـ checkboxes في الواجهة
+    recentLogs.querySelectorAll('.log-batch-select').forEach(cb => {
+        cb.checked = dailySelectAllVisible.checked;
+    });
+    updateDailyPrintToolbar();
+}
+
+// دالة عامة بتطبع أي مجموعة دفعات (ظاهرة / محددة / دفعة واحدة)
+function printDailyBatches(batches) {
+    if (!batches.length) { showToast('لا توجد دفعات للطباعة', 'info'); return; }
+
+    const rows = [];
+    let grandTotal = 0;
+    batches.forEach(b => {
+        b.items.forEach(i => {
+            const cost = Number(i.totalCost) || 0;
+            grandTotal += cost;
+            rows.push([formatDate(b.date), b.project, i.typeName, i.phase, i.quantity, formatCurrency(cost)]);
+        });
+    });
+
+    printReport({
+        title: 'سجل اليوميات المعتمدة',
+        subtitle: isAdmin ? '' : currentUsername,
+        metaLines: [
+            `المشرف: ${currentUsername}`,
+            `عدد الدفعات: ${batches.length}`,
+            `تاريخ الطباعة: ${new Date().toLocaleDateString('ar-EG', { year: 'numeric', month: 'long', day: 'numeric' })}`
+        ],
+        columns: ['التاريخ', 'المشروع', 'النوع', 'المرحلة', 'الكمية', 'التكلفة'],
+        rows,
+        totalsRow: ['', '', '', '', 'الإجمالي', formatCurrency(grandTotal)]
+    });
+
+    // بعد الطباعة نسأل: هل تم تسوية الدفعات غير المطبوعة منها؟
+    const unprintedIds = batches.flatMap(b => b.items).filter(i => !i.printed).map(i => i.id);
+    if (unprintedIds.length) askMarkLogsPrinted(unprintedIds);
+}
+
+function handlePrintShown() {
+    printDailyBatches(filteredDailyBatches);
+}
+
+function handlePrintSelected() {
+    const ids = Array.from(selectedLogBatches);
+    if (!ids.length) return;
+    const batches = filteredDailyBatches.filter(b => ids.includes(b.batchId));
+    printDailyBatches(batches);
+}
+
+// طباعة دفعة واحدة (من زر الطباعة على كل دفعة)
+window.printDailyBatch = function (batchId) {
+    const batch = allDailyBatches.find(b => b.batchId === batchId);
+    if (!batch) { showToast('الدفعة غير موجودة', 'error'); return; }
+    printDailyBatches([batch]);
+};
 
 // ── طباعة بنود اليومية الحالية (قبل الحفظ والإرسال للموافقة) ──
 function handlePrintCart() {

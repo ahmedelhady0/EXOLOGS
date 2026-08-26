@@ -120,11 +120,39 @@
             </div>
         </div>
 
-        <!-- سجل اليوميات الأخيرة (الموافق عليها) -->
+        <!-- سجل اليوميات الأخيرة (الموافق عليها) مع فلترة وطباعة -->
         <div class="section-card p-6 mt-6">
-            <div class="flex justify-between items-center mb-4">
+            <div class="flex flex-wrap justify-between items-center gap-2 mb-4">
                 <h2 class="text-lg font-bold text-gray-800">آخر يومياتي الموافق عليها</h2>
+                <div class="flex gap-2">
+                    <button type="button" id="printShownBtn" class="print-btn py-2 px-3 text-xs font-bold">🖨️ طباعة الظاهر</button>
+                    <button type="button" id="printSelectedBtn" class="print-btn py-2 px-3 text-xs font-bold" disabled>🖨️ طباعة المحدد (<span id="selectedCount">0</span>)</button>
+                </div>
             </div>
+
+            <!-- فلترة السجل -->
+            <div class="grid grid-cols-1 sm:grid-cols-3 gap-3 mb-4 no-print">
+                <div>
+                    <label class="block text-xs font-semibold text-gray-600 mb-1">من تاريخ</label>
+                    <input type="date" id="filterDailyFrom" class="input-field px-3 py-2 w-full">
+                </div>
+                <div>
+                    <label class="block text-xs font-semibold text-gray-600 mb-1">إلى تاريخ</label>
+                    <input type="date" id="filterDailyTo" class="input-field px-3 py-2 w-full">
+                </div>
+                <div>
+                    <label class="block text-xs font-semibold text-gray-600 mb-1">المشروع</label>
+                    <select id="filterDailyProject" class="input-field px-3 py-2 w-full">
+                        <option value="">الكل</option>
+                    </select>
+                </div>
+            </div>
+
+            <div class="flex items-center justify-between mb-3">
+                <label class="flex items-center gap-2 text-xs text-gray-600 cursor-pointer"><input type="checkbox" id="dailySelectAllVisible"> تحديد الكل الظاهر</label>
+                <span id="shownCount" class="text-xs text-gray-400"></span>
+            </div>
+
             <div id="recentLogs">
                 <p class="text-center text-gray-500 text-sm">جاري التحميل...</p>
             </div>
