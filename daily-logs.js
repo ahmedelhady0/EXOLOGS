@@ -3,9 +3,9 @@
 // المشرف يقدر يضيف أكتر من بند (نوع + كمية) في نفس التسجيل، وكلهم بيتسجلوا
 // تحت نفس الـ ID. المرحلة بتتحدد حسب المشروع المختار (من شيت "بيانات المشاريع")
 // ═══════════════════════════════════════════════════════════
-import { auth, showMessage, hideMessage, todayStr, formatCurrency, printReport } from './firebase-config.js';
+import { auth, showToast, showConfirm, todayStr, formatCurrency, printReport, skeletonCards } from './firebase-config.js';
 import { onAuthStateChanged } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
-import { getSetupData, logDailyLog, getDailyLogs, getMyDailyLogRequests, getUserRole } from './sheets-service.js';
+import { getSetupData, logDailyLog, getDailyLogs, getMyDailyLogRequests, getUserRole, markDailyLogsPrinted } from './sheets-service.js';
 
 const logDate = document.getElementById('logDate');
 const logProject = document.getElementById('logProject');
@@ -28,14 +28,13 @@ const cartGrandTotalValue = document.getElementById('cartGrandTotalValue');
 const recentLogs = document.getElementById('recentLogs');
 const pendingLogs = document.getElementById('pendingLogs');
 const submitBtn = document.getElementById('submitBtn');
-const closeMessageBtn = document.getElementById('closeMessageBtn');
 const noProjectsWarning = document.getElementById('noProjectsWarning');
 const loggingFormSections = document.getElementById('loggingFormSections');
 const refreshBtn = document.getElementById('refreshBtn');
 const printCartBtn = document.getElementById('printCartBtn');
 const printLogsBtn = document.getElementById('printLogsBtn');
+const bottomNavApprovals = document.getElementById('bottomNavApprovals');
 
-closeMessageBtn?.addEventListener('click', hideMessage);
 refreshBtn?.addEventListener('click', refreshData);
 
 logDate.value = todayStr();
@@ -53,11 +52,14 @@ onAuthStateChanged(auth, async (user) => {
     if (!user) { window.location.href = 'index.html'; return; }
     currentUsername = user.email.replace('@exo-system.local', '');
 
+    pendingLogs.innerHTML = skeletonCards(2);
+    recentLogs.innerHTML = skeletonCards(2);
+
     // الثلاث نداءات دي مالهاش علاقة ببعض، فبنطلقهم مع بعض بدل ما ننتظر كل واحد لوحده
     // (كل نداء لـ Apps Script بياخد وقت، فتشغيلهم متوازي بيقلل وقت التحميل بشكل كبير)
     const [roleInfo, setupData, logsData, pendingData] = await Promise.all([
         getUserRole(user.email).catch(err => { console.error(err); return null; }),
-        getSetupData().catch(err => { console.error(err); showMessage('فشل تحميل البيانات: ' + err.message); return null; }),
+        getSetupData().catch(err => { console.error(err); showToast('فشل تحميل البيانات: ' + err.message, 'error'); return null; }),
         getDailyLogs(currentUsername).catch(err => { console.error(err); return []; }),
         getMyDailyLogRequests(user.email).catch(err => { console.error(err); return []; })
     ]);
@@ -66,6 +68,7 @@ onAuthStateChanged(auth, async (user) => {
     if (roleInfo) {
         isAdmin = roleInfo.role === 'admin';
         assignedProjects = roleInfo.projects || [];
+        if (roleInfo.role === 'admin' || roleInfo.role === 'engineer') bottomNavApprovals?.classList.remove('hidden');
     } else {
         roleLoadFailed = true;
     }
@@ -129,11 +132,10 @@ async function refreshData() {
             logProject.value = prevProject;
             updatePhaseOptions();
         }
-        showMessage('✅ تم تحديث البيانات');
-        setTimeout(() => hideMessage(), 1000);
+        showToast('تم تحديث البيانات', 'success');
     } catch (err) {
         console.error(err);
-        showMessage('❌ فشل التحديث: ' + err.message);
+        showToast('فشل التحديث: ' + err.message, 'error');
     } finally {
         refreshBtn.disabled = false;
         refreshBtn.textContent = '🔄 تحديث البيانات';
@@ -207,17 +209,17 @@ function calculateItemTotal() {
 
 function handleAddItem() {
     const phase = logPhase.value;
-    if (!phase) { showMessage('يرجى اختيار المرحلة'); return; }
+    if (!phase) { showToast('يرجى اختيار المرحلة', 'warning'); return; }
 
     const typeId = logType.value;
-    if (!typeId) { showMessage('يرجى اختيار نوع اليومية'); return; }
+    if (!typeId) { showToast('يرجى اختيار نوع اليومية', 'warning'); return; }
 
     const quantity = parseFloat(logQuantity.value) || 0;
-    if (quantity <= 0) { showMessage('الكمية يجب أن تكون أكبر من صفر'); return; }
+    if (quantity <= 0) { showToast('الكمية يجب أن تكون أكبر من صفر', 'warning'); return; }
 
     const allowCustom = currentItemAllowsCustom();
     const unitPrice = currentItemUnitPrice();
-    if (allowCustom && unitPrice <= 0) { showMessage('يرجى إدخال السعر للمقطوعية'); return; }
+    if (allowCustom && unitPrice <= 0) { showToast('يرجى إدخال السعر للمقطوعية', 'warning'); return; }
 
     const selectedOption = logType.options[logType.selectedIndex];
     const typeInfo = dailyLogTypes.find(t => t.id === typeId);
@@ -278,17 +280,18 @@ async function handleSubmitBatch() {
     const notes = logNotes.value.trim();
 
     if (!date || !project) {
-        showMessage('يرجى اختيار التاريخ والمشروع');
+        showToast('يرجى اختيار التاريخ والمشروع', 'warning');
         return;
     }
     if (cart.length === 0) {
-        showMessage('أضف بند واحد على الأقل قبل الحفظ');
+        showToast('أضف بند واحد على الأقل قبل الحفظ', 'warning');
         return;
     }
 
     const grandTotal = cart.reduce((s, i) => s + i.totalCost, 0);
     const summary = cart.map(i => `${i.typeName} × ${i.quantity} (${i.phase})`).join('، ');
-    if (!confirm(`تسجيل: ${summary}\nالإجمالي: ${formatCurrency(grandTotal)}؟`)) return;
+    const ok = await showConfirm(`تسجيل: ${summary}\nالإجمالي: ${formatCurrency(grandTotal)}؟`);
+    if (!ok) return;
 
     try {
         submitBtn.disabled = true;
@@ -301,16 +304,15 @@ async function handleSubmitBatch() {
             items: cart
         });
 
-        showMessage('✅ تم إرسال اليومية للمهندس للموافقة عليها');
+        showToast('تم إرسال اليومية للمهندس للموافقة عليها', 'success');
         cart = [];
         renderCart();
         logNotes.value = '';
 
-        setTimeout(() => hideMessage(), 1500);
         await Promise.all([loadRecentLogs(), loadPendingLogs()]);
     } catch (err) {
         console.error(err);
-        showMessage('❌ فشل الحفظ: ' + err.message);
+        showToast('فشل الحفظ: ' + err.message, 'error');
     } finally {
         submitBtn.disabled = false;
         submitBtn.textContent = '✅ حفظ كل اليوميات';
@@ -409,14 +411,21 @@ function renderRecentLogs(logs) {
 
         recentLogs.innerHTML = recentBatches.map(b => {
             const batchTotal = b.items.reduce((s, i) => s + (Number(i.totalCost) || 0), 0);
+            const allPrinted = b.items.every(i => i.printed);
+            const statusBadge = allPrinted
+                ? '<span class="type-badge badge-deposit">مطبوعة</span>'
+                : '<span class="type-badge badge-pending">جديدة</span>';
             return `
                 <div class="p-4 mb-3 rounded-xl" style="border:1px solid rgba(30,60,114,0.12); background:rgba(255,255,255,0.6);">
                     <div class="flex justify-between items-center mb-2">
                         <span class="text-sm font-bold text-indigo-900">${formatDate(b.date)} — ${b.project}</span>
-                        <span class="font-bold text-indigo-600 text-sm">${formatCurrency(batchTotal)}</span>
+                        ${statusBadge}
                     </div>
                     <div class="flex flex-wrap gap-2">
                         ${b.items.map(i => `<span class="type-badge badge-daily">${i.typeName} × ${i.quantity} — ${i.phase}</span>`).join('')}
+                    </div>
+                    <div class="text-left mt-2">
+                        <span class="font-bold text-indigo-600 text-sm">${formatCurrency(batchTotal)}</span>
                     </div>
                 </div>
             `;
@@ -429,7 +438,7 @@ function renderRecentLogs(logs) {
 
 // ── طباعة بنود اليومية الحالية (قبل الحفظ والإرسال للموافقة) ──
 function handlePrintCart() {
-    if (!cart.length) { showMessage('⚠️ أضف بند واحد على الأقل قبل الطباعة'); return; }
+    if (!cart.length) { showToast('أضف بند واحد على الأقل قبل الطباعة', 'warning'); return; }
 
     const rows = cart.map(i => [
         i.typeName, i.phase, i.quantity, formatCurrency(i.unitPrice), formatCurrency(i.totalCost)
@@ -450,13 +459,19 @@ function handlePrintCart() {
     });
 }
 
-// ── طباعة سجل اليوميات الموافق عليها (آخر 30 يومية) ──────────
+// ── طباعة سجل اليوميات الموافق عليها اللي لسه ما اتسوتش ──────────
+// بنطبع بس اليوميات اللي لسه "جديدة" (ما اتعلمتش مطبوعة قبل كده)، عشان
+// لو المحاسب استلم كشف الأسبوع اللي فات وسواه، الطباعة الجاية ميكررهوش
 function handlePrintLogs() {
-    if (!lastLogs.length) { showMessage('⚠️ لا يوجد سجل يوميات موافق عليه بعد'); return; }
+    const unsettled = lastLogs.filter(l => !l.printed);
+    if (!unsettled.length) {
+        showToast('لا توجد يوميات جديدة — كل السجل اتطبع وتم تسويته من قبل', 'info');
+        return;
+    }
 
     const batches = [];
     const idx = {};
-    lastLogs.forEach(l => {
+    unsettled.forEach(l => {
         const key = l.batchId || l.id;
         if (!idx[key]) { idx[key] = { date: l.date, project: l.project, items: [] }; batches.push(idx[key]); }
         idx[key].items.push(l);
@@ -464,7 +479,7 @@ function handlePrintLogs() {
 
     const rows = [];
     let grandTotal = 0;
-    batches.slice(0, 30).forEach(b => {
+    batches.forEach(b => {
         b.items.forEach(i => {
             const cost = Number(i.totalCost) || 0;
             grandTotal += cost;
@@ -473,17 +488,36 @@ function handlePrintLogs() {
     });
 
     printReport({
-        title: 'سجل اليوميات المعتمدة',
+        title: 'سجل اليوميات المعتمدة (الجديدة)',
         subtitle: isAdmin ? '' : currentUsername,
         metaLines: [
             `المشرف: ${currentUsername}`,
-            `عدد اليوميات: ${batches.length}`,
+            `عدد اليوميات الجديدة: ${batches.length}`,
             `تاريخ الطباعة: ${new Date().toLocaleDateString('ar-EG', { year: 'numeric', month: 'long', day: 'numeric' })}`
         ],
         columns: ['التاريخ', 'المشروع', 'النوع', 'المرحلة', 'الكمية', 'التكلفة'],
         rows,
         totalsRow: ['', '', '', '', 'الإجمالي', formatCurrency(grandTotal)]
     });
+
+    askMarkLogsPrinted(unsettled.map(l => l.id));
+}
+
+// بعد الطباعة، نسأل نتأكد إن السجل ده اتسلّم/اتسوى — لو أكد، بنعلّم
+// اليوميات دي "مطبوعة" عشان متتكررش في طباعة السجل الجاية
+async function askMarkLogsPrinted(ids) {
+    const ok = await showConfirm(
+        'تم تسليم هذا السجل للمحاسب وتسويته؟\nلو أكدت، اليوميات دي مش هتظهر تاني في طباعة السجل الجاية.',
+        { confirmText: 'تمت التسوية ✅', cancelText: 'لسه، سيبها تظهر تاني' }
+    );
+    if (!ok) return;
+    try {
+        await markDailyLogsPrinted(ids);
+        lastLogs.forEach(l => { if (ids.includes(l.id)) l.printed = true; });
+        showToast('تم تعليم اليوميات كمطبوعة/متسواة', 'success');
+    } catch (err) {
+        showToast('تعذر تعليم اليوميات: ' + err.message, 'error');
+    }
 }
 
 function formatDate(dateStr) {

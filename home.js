@@ -1,21 +1,21 @@
 // ═══════════════════════════════════════════════════════════
 // الصفحة الرئيسية — نظام EXO
 // ═══════════════════════════════════════════════════════════
-import { auth, showMessage, hideMessage } from './firebase-config.js';
+import { auth, showToast, skeletonCards } from './firebase-config.js';
 import { onAuthStateChanged, signOut } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
 import { getSetupData, getDailyLogsSummary, getMyCustodySummary, getUserRole } from './sheets-service.js';
 
 const signOutBtn = document.getElementById('signOutBtn');
 const userWelcome = document.getElementById('userWelcome');
 const quickStats = document.getElementById('quickStats');
-const closeMessageBtn = document.getElementById('closeMessageBtn');
 const approvalsCard = document.getElementById('approvalsCard');
-
-closeMessageBtn?.addEventListener('click', hideMessage);
+const bottomNavApprovals = document.getElementById('bottomNavApprovals');
 
 let currentUsername = null;
 let currentEmail = null;
 let isAdmin = false;
+
+quickStats.innerHTML = skeletonCards(3);
 
 onAuthStateChanged(auth, async (user) => {
     if (!user) { window.location.href = 'index.html'; return; }
@@ -31,6 +31,7 @@ onAuthStateChanged(auth, async (user) => {
         // بطاقة الموافقات تظهر للمهندس أو الأدمن
         if (info.role === 'admin' || info.role === 'engineer') {
             approvalsCard.classList.remove('hidden');
+            bottomNavApprovals?.classList.remove('hidden');
         }
     } catch (err) {
         console.error(err);
@@ -44,7 +45,7 @@ signOutBtn?.addEventListener('click', async () => {
         await signOut(auth);
         window.location.href = 'index.html';
     } catch (err) {
-        showMessage('فشل تسجيل الخروج: ' + err.message);
+        showToast('فشل تسجيل الخروج: ' + err.message, 'error');
     }
 });
 

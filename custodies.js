@@ -3,11 +3,12 @@
 // المشرف يسجل فواتير (سلة) → تروح للمهندس للموافقة
 // الأدمن يودع مباشرة، يعيّن مشاريع، يضيف بنود، ويحدد الرتب
 // ═══════════════════════════════════════════════════════════
-import { auth, showMessage, hideMessage, todayStr, formatCurrency, printReport } from './firebase-config.js';
+import { auth, showToast, showConfirm, todayStr, formatCurrency, printReport, skeletonCards, skeletonRows } from './firebase-config.js';
 import { onAuthStateChanged } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
 import {
     getUserRole, getSetupData, getUsers, getProjectCustody, getMyCustodyRequests,
-    logCustodyExpense, depositCustody, addCustodyItem, updateUserProjects, setUserRole
+    logCustodyExpense, depositCustody, addCustodyItem, updateUserProjects, setUserRole,
+    markCustodyPrinted
 } from './sheets-service.js';
 
 const adminSection = document.getElementById('adminSection');
@@ -15,8 +16,8 @@ const custodyProjectSelect = document.getElementById('custodyProjectSelect');
 const custodyContent = document.getElementById('custodyContent');
 const noProjectsWarning = document.getElementById('noProjectsWarning');
 const headerSub = document.getElementById('headerSub');
-const closeMessageBtn = document.getElementById('closeMessageBtn');
 const refreshBtn = document.getElementById('refreshBtn');
+const bottomNavApprovals = document.getElementById('bottomNavApprovals');
 
 // عناصر الفاتورة
 const invDate = document.getElementById('invDate');
@@ -32,7 +33,6 @@ const submitCustodyBtn = document.getElementById('submitCustodyBtn');
 const printLedgerBtn = document.getElementById('printLedgerBtn');
 const printCartBtn = document.getElementById('printCartBtn');
 
-closeMessageBtn?.addEventListener('click', hideMessage);
 refreshBtn?.addEventListener('click', refreshData);
 invDate.value = todayStr();
 
@@ -59,6 +59,7 @@ onAuthStateChanged(auth, async (user) => {
         const info = await getUserRole(user.email);
         isAdmin = info.role === 'admin';
         assignedProjects = info.projects || [];
+        if (info.role === 'admin' || info.role === 'engineer') bottomNavApprovals?.classList.remove('hidden');
     } catch (err) {
         console.error(err);
     }
@@ -104,7 +105,7 @@ async function loadSetup(forceRefresh = false) {
         return data;
     } catch (err) {
         console.error(err);
-        showMessage('فشل تحميل البيانات: ' + err.message);
+        showToast('فشل تحميل البيانات: ' + err.message, 'error');
         return null;
     }
 }
@@ -162,11 +163,10 @@ async function refreshData() {
             custodyContent.classList.add('hidden');
         }
 
-        showMessage('✅ تم تحديث البيانات');
-        setTimeout(() => hideMessage(), 1000);
+        showToast('تم تحديث البيانات', 'success');
     } catch (err) {
         console.error(err);
-        showMessage('❌ فشل التحديث: ' + err.message);
+        showToast('فشل التحديث: ' + err.message, 'error');
     } finally {
         refreshBtn.disabled = false;
         refreshBtn.textContent = '🔄 تحديث البيانات';
@@ -185,6 +185,9 @@ async function handleProjectChange() {
     const phases = projectPhases[selectedProject] || [];
     invPhase.innerHTML = '<option value="">— اختر المرحلة —</option>' +
         phases.map(p => `<option value="${p}">${p}</option>`).join('');
+
+    document.getElementById('custMovementsList').innerHTML = skeletonRows(3);
+    document.getElementById('custPendingList').innerHTML = skeletonCards(2);
 
     await Promise.all([loadProjectCustody(), loadMyPending()]);
 }
@@ -240,6 +243,7 @@ function renderMovements(movements) {
             <td>${m.description || '-'}</td>
             <td>${(m.isTax === 'نعم' || m.isTax === true) ? '✅' : '—'}</td>
             <td class="font-bold whitespace-nowrap" style="color:${isDeposit ? '#059669' : '#dc2626'}">${isDeposit ? '+' : '−'} ${formatCurrency(amt)}</td>
+            <td>${m.printed ? '<span class="type-badge badge-deposit">مطبوعة</span>' : '<span class="type-badge badge-pending">جديدة</span>'}</td>
         `;
         tbody.appendChild(row);
     });
@@ -310,8 +314,8 @@ function handleAddInvoice() {
     const amount = parseFloat(invAmount.value) || 0;
     const description = invDesc.value.trim();
 
-    if (amount <= 0) { showMessage('⚠️ أدخل قيمة صحيحة'); return; }
-    if (!description) { showMessage('⚠️ أدخل الوصف'); return; }
+    if (amount <= 0) { showToast('أدخل قيمة صحيحة', 'warning'); return; }
+    if (!description) { showToast('أدخل الوصف', 'warning'); return; }
 
     const isTax = invIsTax.checked;
     const t = calcTax(amount, isTax);
@@ -374,11 +378,12 @@ function renderCart() {
 }
 
 async function handleSubmitCustody() {
-    if (!selectedProject) { showMessage('⚠️ اختر المشروع أولاٌ'); return; }
-    if (!cart.length) { showMessage('⚠️ أضف فاتورة واحدة على الأقل'); return; }
+    if (!selectedProject) { showToast('اختر المشروع أولاً', 'warning'); return; }
+    if (!cart.length) { showToast('أضف فاتورة واحدة على الأقل', 'warning'); return; }
 
     const total = cart.reduce((s, c) => s + c.amount, 0);
-    if (!confirm(`إرسال ${cart.length} فاتورة بإجمالي ${formatCurrency(total)} للموافقة؟`)) return;
+    const ok = await showConfirm(`إرسال ${cart.length} فاتورة بإجمالي ${formatCurrency(total)} للموافقة؟`);
+    if (!ok) return;
 
     try {
         submitCustodyBtn.disabled = true;
@@ -389,24 +394,31 @@ async function handleSubmitCustody() {
             recordedBy: currentEmail,
             items: cart
         });
-        showMessage('✅ تم إرسال الفواتير للمهندس للموافقة');
+        showToast('تم إرسال الفواتير للمهندس للموافقة', 'success');
         cart = [];
         renderCart();
-        setTimeout(() => hideMessage(), 1500);
         await Promise.all([loadMyPending(), loadProjectCustody()]);
     } catch (err) {
-        showMessage('❌ فشل الإرسال: ' + err.message);
+        showToast('فشل الإرسال: ' + err.message, 'error');
     } finally {
         submitCustodyBtn.disabled = false;
         submitCustodyBtn.textContent = '✅ إرسال للموافقة';
     }
 }
 
-// ── طباعة كشف حساب العهدة (الحركات المعتمدة) ───────────
+// ── طباعة كشف حساب العهدة (الحركات المعتمدة اللي لسه ما اتسوتش) ───────
+// بنطبع بس الحركات اللي لسه "جديدة" (ما اتعلمتش مطبوعة قبل كده)، عشان
+// لو المحاسب استلم كشف الأسبوع اللي فات وسواه، الكشف الجاي ميكررهوش
 function handlePrintLedger() {
-    if (!selectedProject) { showMessage('⚠️ اختر المشروع أولاً لطباعة كشف حسابه'); return; }
+    if (!selectedProject) { showToast('اختر المشروع أولاً لطباعة كشف حسابه', 'warning'); return; }
 
-    const rows = lastMovements.map(m => {
+    const unsettled = lastMovements.filter(m => !m.printed);
+    if (!unsettled.length) {
+        showToast('لا توجد حركات جديدة — كل الحركات اتطبعت وتم تسويتها من قبل', 'info');
+        return;
+    }
+
+    const rows = unsettled.map(m => {
         const isDeposit = m.type === 'إيداع عهدة';
         const amt = Number(m.amount) || 0;
         return [
@@ -418,29 +430,50 @@ function handlePrintLedger() {
             (isDeposit ? '+ ' : '− ') + formatCurrency(amt)
         ];
     });
+    const periodTotal = unsettled.reduce((s, m) => s + (m.type === 'إيداع عهدة' ? 1 : -1) * (Number(m.amount) || 0), 0);
 
     printReport({
-        title: 'كشف حساب عهدة مشروع',
+        title: 'كشف حساب عهدة مشروع (الحركات الجديدة)',
         subtitle: selectedProject,
         metaLines: [
             `المشرف: ${isAdmin ? 'كل المشرفين' : currentUsername}`,
             `تاريخ الطباعة: ${new Date().toLocaleDateString('ar-EG', { year: 'numeric', month: 'long', day: 'numeric' })}`,
-            `إجمالي الإيداعات: ${formatCurrency(lastSummary.totalDeposit || 0)}`,
-            `إجمالي الصرف: ${formatCurrency(lastSummary.totalExpense || 0)}`,
-            `المتبقي: ${formatCurrency(lastSummary.remaining || 0)}`
+            `عدد الحركات الجديدة: ${unsettled.length}`,
+            `إجمالي هذه الحركات: ${formatCurrency(periodTotal)}`,
+            `المتبقي الإجمالي للمشروع: ${formatCurrency(lastSummary.remaining || 0)}`
         ],
         columns: ['التاريخ', 'النوع', 'البند', 'الوصف', 'ضريبية', 'القيمة'],
         rows,
-        totalsRow: ['', '', '', '', 'المتبقي', formatCurrency(lastSummary.remaining || 0)],
-        emptyText: 'لا توجد حركات معتمدة بعد لهذا المشروع'
+        totalsRow: ['', '', '', '', 'إجمالي هذا الكشف', formatCurrency(periodTotal)],
+        emptyText: 'لا توجد حركات جديدة'
     });
+
+    askMarkCustodyPrinted(unsettled.map(m => m.id));
+}
+
+// بعد الطباعة، نسأل المشرف/الأدمن يأكد إن الكشف ده اتسلّم للمحاسب — لو أكد
+// بنعلّم الحركات دي "مطبوعة" عشان متتكررش في الكشف الجاي
+async function askMarkCustodyPrinted(ids) {
+    const ok = await showConfirm(
+        'تم تسليم هذا الكشف للمحاسب وتسويته؟\nلو أكدت، الحركات دي مش هتظهر تاني في كشف الطباعة الجاي.',
+        { confirmText: 'تمت التسوية ✅', cancelText: 'لسه، سيبها تظهر تاني' }
+    );
+    if (!ok) return;
+    try {
+        await markCustodyPrinted(selectedProject, ids);
+        lastMovements.forEach(m => { if (ids.includes(m.id)) m.printed = true; });
+        renderMovements(lastMovements);
+        showToast('تم تعليم الحركات كمطبوعة/متسواة', 'success');
+    } catch (err) {
+        showToast('تعذر تعليم الحركات: ' + err.message, 'error');
+    }
 }
 
 // ── طباعة سلة الفواتير الحالية (قبل إرسالها للموافقة) ────
 // مفيدة عشان المشرف يطبع/يحفظ PDF لفواتيره أول ما يخلص إدخالها
 function handlePrintCart() {
-    if (!selectedProject) { showMessage('⚠️ اختر المشروع أولاً'); return; }
-    if (!cart.length) { showMessage('⚠️ لا توجد فواتير في السلة للطباعة'); return; }
+    if (!selectedProject) { showToast('اختر المشروع أولاً', 'warning'); return; }
+    if (!cart.length) { showToast('لا توجد فواتير في السلة للطباعة', 'warning'); return; }
 
     const rows = cart.map(c => [
         formatDate(c.date),
@@ -510,21 +543,21 @@ async function handleDepositSubmit(e) {
     const amount = document.getElementById('depositAmount').value;
     const description = document.getElementById('depositDesc').value.trim();
 
-    if (!supervisor) { showMessage('⚠️ اختر المشرف'); return; }
-    if (!project) { showMessage('⚠️ اختر المشروع'); return; }
-    if (!amount || Number(amount) <= 0) { showMessage('⚠️ أدخل مبلغ صحيح'); return; }
-    if (!confirm(`إيداع ${amount} ر.س في عهدة "${supervisor}" لمشروع "${project}"؟`)) return;
+    if (!supervisor) { showToast('اختر المشرف', 'warning'); return; }
+    if (!project) { showToast('اختر المشروع', 'warning'); return; }
+    if (!amount || Number(amount) <= 0) { showToast('أدخل مبلغ صحيح', 'warning'); return; }
+    const ok = await showConfirm(`إيداع ${amount} ر.س في عهدة "${supervisor}" لمشروع "${project}"؟`);
+    if (!ok) return;
 
     try {
         await depositCustody({ date: todayStr(), amount: Number(amount), description, supervisor, project, recordedBy: currentEmail });
-        showMessage('✅ تم الإيداع بنجاح');
+        showToast('تم الإيداع بنجاح', 'success');
         document.getElementById('depositAmount').value = '';
         document.getElementById('depositDesc').value = '';
-        setTimeout(() => hideMessage(), 1200);
         // لو المشروع المعروض هو نفسه، حدّث العرض
         if (selectedProject === project) await loadProjectCustody();
     } catch (err) {
-        showMessage('❌ فشل الإيداع: ' + err.message);
+        showToast('فشل الإيداع: ' + err.message, 'error');
     }
 }
 
@@ -563,26 +596,24 @@ async function handleSaveProjects() {
     const checked = Array.from(document.querySelectorAll('.project-assign-checkbox:checked')).map(c => c.value);
     try {
         await updateUserProjects(username, checked, currentEmail);
-        showMessage('✅ تم حفظ مشاريع المشرف');
-        setTimeout(() => hideMessage(), 1200);
+        showToast('تم حفظ مشاريع المشرف', 'success');
         allUsers = await getUsers();
         renderProjectAssignBox();
     } catch (err) {
-        showMessage('❌ فشل الحفظ: ' + err.message);
+        showToast('فشل الحفظ: ' + err.message, 'error');
     }
 }
 
 async function handleSaveRole() {
     const username = document.getElementById('roleUserSelect').value;
     const role = document.getElementById('roleSelect').value;
-    if (!username) { showMessage('⚠️ اختر المستخدم'); return; }
+    if (!username) { showToast('اختر المستخدم', 'warning'); return; }
     try {
         await setUserRole(username, role, currentEmail);
-        showMessage('✅ تم تحديث الرتبة');
-        setTimeout(() => hideMessage(), 1200);
+        showToast('تم تحديث الرتبة', 'success');
         allUsers = await getUsers();
     } catch (err) {
-        showMessage('❌ فشل التحديث: ' + err.message);
+        showToast('فشل التحديث: ' + err.message, 'error');
     }
 }
 
@@ -592,13 +623,12 @@ async function handleAddItemSubmit(e) {
     if (!name) return;
     try {
         await addCustodyItem(name, currentEmail);
-        showMessage('✅ تم إضافة البند');
+        showToast('تم إضافة البند', 'success');
         document.getElementById('newItemName').value = '';
-        setTimeout(() => hideMessage(), 1200);
         const setup = await loadSetup();
         if (setup) { populateItemSelect(); renderItemsList(); }
     } catch (err) {
-        showMessage('❌ فشل الإضافة: ' + err.message);
+        showToast('فشل الإضافة: ' + err.message, 'error');
     }
 }
 

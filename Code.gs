@@ -176,6 +176,13 @@ function newId_(prefix) {
   return prefix + '-' + Utilities.formatDate(new Date(), Session.getScriptTimeZone(), 'yyyyMMdd-HHmmss') + '-' + Math.floor(Math.random() * 1000);
 }
 
+// تفسير قيمة عمود "مطبوعة" (ممكن تتخزن Boolean أو 'TRUE'/'نعم' نصياً)
+function isTruthyFlag_(v) {
+  if (v === true) return true;
+  const s = String(v || '').trim().toLowerCase();
+  return s === 'true' || s === 'نعم' || s === '1';
+}
+
 // ═══════════════════════════════════════════════════════════
 //  إنشاء الشيتات المطلوبة
 // ═══════════════════════════════════════════════════════════
@@ -198,7 +205,9 @@ function getOrCreateDailyLogsSheet() {
   let sheet = ss.getSheetByName(SHEET_NAMES.dailyLogs);
   if (!sheet) {
     sheet = ss.insertSheet(SHEET_NAMES.dailyLogs);
-    sheet.appendRow(['ID', 'التاريخ', 'المشروع', 'المرحلة', 'نوع اليومية', 'اسم النوع', 'الكمية', 'سعر الوحدة', 'الإجمالي', 'ملاحظات', 'المشرف', 'تاريخ التسجيل']);
+    sheet.appendRow(['ID', 'التاريخ', 'المشروع', 'المرحلة', 'نوع اليومية', 'اسم النوع', 'الكمية', 'سعر الوحدة', 'الإجمالي', 'ملاحظات', 'المشرف', 'تاريخ التسجيل', 'مطبوعة']);
+  } else {
+    ensureColumn_(sheet, 'مطبوعة');
   }
   return sheet;
 }
@@ -256,7 +265,9 @@ function getOrCreateProjectCustodySheet(project) {
   let sheet = ss.getSheetByName(name);
   if (!sheet) {
     sheet = ss.insertSheet(name);
-    sheet.appendRow(['ID', 'التاريخ', 'نوع الحركة', 'القيمة', 'قيمة الضريبة', 'صافي القيمة', 'فاتورة ضريبية', 'رقم الفاتورة', 'المرحلة', 'البند', 'الوصف', 'المشرف', 'المسجل بواسطة', 'تاريخ التسجيل']);
+    sheet.appendRow(['ID', 'التاريخ', 'نوع الحركة', 'القيمة', 'قيمة الضريبة', 'صافي القيمة', 'فاتورة ضريبية', 'رقم الفاتورة', 'المرحلة', 'البند', 'الوصف', 'المشرف', 'المسجل بواسطة', 'تاريخ التسجيل', 'مطبوعة']);
+  } else {
+    ensureColumn_(sheet, 'مطبوعة');
   }
   return sheet;
 }
@@ -320,7 +331,6 @@ function doGet(e) {
     if (action === 'getProjectCustody') return handleGetProjectCustody(e);
     if (action === 'getMyCustodySummary') return handleGetMyCustodySummary(e);
     if (action === 'getCustodyItems') return handleGetCustodyItems();
-
     return jsonResponse({ error: 'Unknown action: ' + action });
   } catch (err) {
     return jsonResponse({ error: err.message });
@@ -336,11 +346,15 @@ function doPost(e) {
     if (action === 'logDailyLog') return handleLogDailyLog(body);
     if (action === 'approveDailyLog') return handleApproveDailyLog(body);
     if (action === 'rejectDailyLog') return handleRejectDailyLog(body);
+    if (action === 'bulkApproveDailyLogs') return handleBulkApproveDailyLogs(body);
+    if (action === 'markDailyLogsPrinted') return handleMarkDailyLogsPrinted(body);
 
     // العهد
     if (action === 'logCustodyExpense') return handleLogCustodyExpense(body);
     if (action === 'approveCustodyExpense') return handleApproveCustodyExpense(body);
     if (action === 'rejectCustodyExpense') return handleRejectCustodyExpense(body);
+    if (action === 'bulkApproveCustody') return handleBulkApproveCustody(body);
+    if (action === 'markCustodyPrinted') return handleMarkCustodyPrinted(body);
     if (action === 'depositCustody') return handleDepositCustody(body);
     if (action === 'addCustodyItem') return handleAddCustodyItem(body);
 
@@ -546,7 +560,8 @@ function mapDailyLog_(logs, forcedStatus) {
     notes: l['ملاحظات'],
     supervisor: l['المشرف'],
     status: forcedStatus || String(l['الحالة'] || '').trim(),
-    rejectReason: l['سبب الرفض'] || ''
+    rejectReason: l['سبب الرفض'] || '',
+    printed: isTruthyFlag_(l['مطبوعة'])
   }));
 }
 
@@ -606,7 +621,8 @@ function handleGetProjectCustody(e) {
       phase: m['المرحلة'],
       item: m['البند'],
       description: m['الوصف'],
-      supervisor: m['المشرف']
+      supervisor: m['المشرف'],
+      printed: isTruthyFlag_(m['مطبوعة'])
     })),
     summary: {
       totalDeposit: Math.round(totalDeposit * 100) / 100,
@@ -732,34 +748,85 @@ function handleLogDailyLog(body) {
 }
 
 // المهندس/الأدمن يوافق على دفعة يوميات → تنتقل من "تحت المراجعة" إلى "سجل اليوميات"
+// (منطق أساسي قابل لإعادة الاستخدام في الموافقة المفردة والموافقة الجماعية)
+function approveDailyLogCore_(batchId) {
+  batchId = String(batchId || '').trim();
+  if (!batchId) return { ok: false, error: 'معرف الدفعة مطلوب' };
+
+  const pendingSheet = getOrCreatePendingDailyLogsSheet();
+  const values = pendingSheet.getDataRange().getValues();
+  const headerIdx = getHeaderRowIndex(pendingSheet);
+
+  // نجمع صفوف الدفعة (أول 12 عمود = أعمدة سجل اليوميات + عمود "مطبوعة" فاضي)
+  const rowsToMove = [];
+  const rowNumbers = [];
+  for (let i = headerIdx + 1; i < values.length; i++) {
+    if (String(values[i][0]).trim() === batchId) {
+      rowsToMove.push(values[i].slice(0, 12).concat(['']));
+      rowNumbers.push(i + 1);
+    }
+  }
+  if (!rowsToMove.length) return { ok: false, error: 'الدفعة غير موجودة: ' + batchId };
+
+  const logSheet = getOrCreateDailyLogsSheet();
+  logSheet.getRange(logSheet.getLastRow() + 1, 1, rowsToMove.length, rowsToMove[0].length).setValues(rowsToMove);
+
+  // حذف الصفوف من تحت المراجعة (من الأسفل للأعلى عشان الفهرسة)
+  rowNumbers.sort((a, b) => b - a).forEach(rn => pendingSheet.deleteRow(rn));
+
+  return { ok: true, count: rowsToMove.length };
+}
+
 function handleApproveDailyLog(body) {
   try {
     requireApprover_(body && body.approverEmail);
-    const batchId = String((body && body.batchId) || '').trim();
-    if (!batchId) return jsonResponse({ ok: false, error: 'معرف الدفعة مطلوب' });
+    return jsonResponse(approveDailyLogCore_(body && body.batchId));
+  } catch (err) {
+    return jsonResponse({ ok: false, error: err.message });
+  }
+}
 
-    const pendingSheet = getOrCreatePendingDailyLogsSheet();
-    const values = pendingSheet.getDataRange().getValues();
-    const headerIdx = getHeaderRowIndex(pendingSheet);
+// موافقة جماعية على أكتر من دفعة يوميات مرة واحدة (لتسريع مراجعة المهندس)
+function handleBulkApproveDailyLogs(body) {
+  try {
+    requireApprover_(body && body.approverEmail);
+    const batchIds = Array.isArray(body && body.batchIds) ? body.batchIds : [];
+    if (!batchIds.length) return jsonResponse({ ok: false, error: 'لا توجد دفعات محددة' });
 
-    // نجمع صفوف الدفعة (أول 12 عمود = أعمدة سجل اليوميات)
-    const rowsToMove = [];
-    const rowNumbers = [];
+    let approved = 0;
+    const failed = [];
+    batchIds.forEach(id => {
+      const r = approveDailyLogCore_(id);
+      if (r.ok) approved += r.count; else failed.push({ batchId: id, error: r.error });
+    });
+    return jsonResponse({ ok: true, approved, batches: batchIds.length - failed.length, failed });
+  } catch (err) {
+    return jsonResponse({ ok: false, error: err.message });
+  }
+}
+
+// المشرف يعلّم دفعات يوميات معينة كـ "مطبوعة" (بعد ما يطبعها/يسلّمها) عشان
+// طباعة السجل الجاية تعرض بس اليوميات الجديدة اللي لسه ما اتطبعتش
+function handleMarkDailyLogsPrinted(body) {
+  try {
+    const ids = Array.isArray(body && body.ids) ? body.ids.map(String) : [];
+    if (!ids.length) return jsonResponse({ ok: false, error: 'لا توجد يوميات لتعليمها' });
+
+    const sheet = getOrCreateDailyLogsSheet();
+    const headers = getNormalizedHeaders(sheet);
+    const idCol = headers.indexOf('ID');
+    const printedCol = headers.indexOf('مطبوعة');
+    const headerIdx = getHeaderRowIndex(sheet);
+    const values = sheet.getDataRange().getValues();
+
+    let count = 0;
     for (let i = headerIdx + 1; i < values.length; i++) {
-      if (String(values[i][0]).trim() === batchId) {
-        rowsToMove.push(values[i].slice(0, 12));
-        rowNumbers.push(i + 1);
+      if (ids.indexOf(String(values[i][idCol]).trim()) !== -1) {
+        sheet.getRange(i + 1, printedCol + 1).setValue(true);
+        count++;
       }
     }
-    if (!rowsToMove.length) return jsonResponse({ ok: false, error: 'الدفعة غير موجودة' });
-
-    const logSheet = getOrCreateDailyLogsSheet();
-    logSheet.getRange(logSheet.getLastRow() + 1, 1, rowsToMove.length, rowsToMove[0].length).setValues(rowsToMove);
-
-    // حذف الصفوف من تحت المراجعة (من الأسفل للأعلى عشان الفهرسة)
-    rowNumbers.sort((a, b) => b - a).forEach(rn => pendingSheet.deleteRow(rn));
-
-    return jsonResponse({ ok: true, count: rowsToMove.length });
+    return jsonResponse({ ok: true, count });
   } catch (err) {
     return jsonResponse({ ok: false, error: err.message });
   }
@@ -846,55 +913,95 @@ function handleLogCustodyExpense(body) {
 }
 
 // المهندس/الأدمن يوافق على دفعة فواتير عهدة → تنتقل لشيت عهدة المشروع
+// (منطق أساسي قابل لإعادة الاستخدام في الموافقة المفردة والموافقة الجماعية)
+function approveCustodyCore_(batchId, approverEmail) {
+  batchId = String(batchId || '').trim();
+  if (!batchId) return { ok: false, error: 'معرف الدفعة مطلوب' };
+
+  const pendingSheet = getOrCreatePendingCustodySheet();
+  const values = pendingSheet.getDataRange().getValues();
+  const headerIdx = getHeaderRowIndex(pendingSheet);
+
+  const rowsToMove = [];
+  const rowNumbers = [];
+  let project = '';
+  for (let i = headerIdx + 1; i < values.length; i++) {
+    if (String(values[i][0]).trim() === batchId) {
+      project = String(values[i][2]).trim(); // عمود المشروع
+      rowsToMove.push(values[i]);
+      rowNumbers.push(i + 1);
+    }
+  }
+  if (!rowsToMove.length) return { ok: false, error: 'الدفعة غير موجودة: ' + batchId };
+  if (!project) return { ok: false, error: 'المشروع غير محدد في الدفعة' };
+
+  // تحويل الصفوف لتنسيق شيت عهدة المشروع:
+  // [ID, التاريخ, نوع الحركة, القيمة, قيمة الضريبة, صافي القيمة, فاتورة ضريبية, رقم الفاتورة, المرحلة, البند, الوصف, المشرف, المسجل بواسطة, تاريخ التسجيل, مطبوعة]
+  const approver = String(approverEmail || '').split('@')[0];
+  const custodyRows = rowsToMove.map(r => ([
+    r[0], r[1], 'صرف', r[3], r[4], r[5], r[6], r[7], r[8], r[9], r[10], r[11], approver, new Date(), ''
+  ]));
+
+  const custodySheet = getOrCreateProjectCustodySheet(project);
+  custodySheet.getRange(custodySheet.getLastRow() + 1, 1, custodyRows.length, custodyRows[0].length).setValues(custodyRows);
+
+  rowNumbers.sort((a, b) => b - a).forEach(rn => pendingSheet.deleteRow(rn));
+
+  return { ok: true, count: custodyRows.length, project };
+}
+
 function handleApproveCustodyExpense(body) {
   try {
     requireApprover_(body && body.approverEmail);
-    const batchId = String((body && body.batchId) || '').trim();
-    if (!batchId) return jsonResponse({ ok: false, error: 'معرف الدفعة مطلوب' });
+    return jsonResponse(approveCustodyCore_(body && body.batchId, body && body.approverEmail));
+  } catch (err) {
+    return jsonResponse({ ok: false, error: err.message });
+  }
+}
 
-    const pendingSheet = getOrCreatePendingCustodySheet();
-    const values = pendingSheet.getDataRange().getValues();
-    const headerIdx = getHeaderRowIndex(pendingSheet);
+// موافقة جماعية على أكتر من دفعة فواتير عهدة مرة واحدة
+function handleBulkApproveCustody(body) {
+  try {
+    requireApprover_(body && body.approverEmail);
+    const batchIds = Array.isArray(body && body.batchIds) ? body.batchIds : [];
+    if (!batchIds.length) return jsonResponse({ ok: false, error: 'لا توجد دفعات محددة' });
 
-    const rowsToMove = [];
-    const rowNumbers = [];
-    let project = '';
+    let approved = 0;
+    const failed = [];
+    batchIds.forEach(id => {
+      const r = approveCustodyCore_(id, body.approverEmail);
+      if (r.ok) approved += r.count; else failed.push({ batchId: id, error: r.error });
+    });
+    return jsonResponse({ ok: true, approved, batches: batchIds.length - failed.length, failed });
+  } catch (err) {
+    return jsonResponse({ ok: false, error: err.message });
+  }
+}
+
+// المشرف يعلّم حركات عهدة معينة كـ "مطبوعة" (بعد ما يطبعها ويسلّمها للمحاسب)
+// عشان طباعة كشف الحساب الجاية تعرض بس الحركات الجديدة اللي لسه ما اتطبعتش
+function handleMarkCustodyPrinted(body) {
+  try {
+    const project = String((body && body.project) || '').trim();
+    const ids = Array.isArray(body && body.ids) ? body.ids.map(String) : [];
+    if (!project) return jsonResponse({ ok: false, error: 'المشروع مطلوب' });
+    if (!ids.length) return jsonResponse({ ok: false, error: 'لا توجد حركات لتعليمها' });
+
+    const sheet = getOrCreateProjectCustodySheet(project);
+    const headers = getNormalizedHeaders(sheet);
+    const idCol = headers.indexOf('ID');
+    const printedCol = headers.indexOf('مطبوعة');
+    const headerIdx = getHeaderRowIndex(sheet);
+    const values = sheet.getDataRange().getValues();
+
+    let count = 0;
     for (let i = headerIdx + 1; i < values.length; i++) {
-      if (String(values[i][0]).trim() === batchId) {
-        project = String(values[i][2]).trim(); // عمود المشروع
-        rowsToMove.push(values[i]);
-        rowNumbers.push(i + 1);
+      if (ids.indexOf(String(values[i][idCol]).trim()) !== -1) {
+        sheet.getRange(i + 1, printedCol + 1).setValue(true);
+        count++;
       }
     }
-    if (!rowsToMove.length) return jsonResponse({ ok: false, error: 'الدفعة غير موجودة' });
-    if (!project) return jsonResponse({ ok: false, error: 'المشروع غير محدد في الدفعة' });
-
-    // تحويل الصفوف لتنسيق شيت عهدة المشروع:
-    // [ID, التاريخ, نوع الحركة, القيمة, قيمة الضريبة, صافي القيمة, فاتورة ضريبية, رقم الفاتورة, المرحلة, البند, الوصف, المشرف, المسجل بواسطة, تاريخ التسجيل]
-    const approver = String((body && body.approverEmail) || '').split('@')[0];
-    const custodyRows = rowsToMove.map(r => ([
-      r[0],   // ID
-      r[1],   // التاريخ
-      'صرف',  // نوع الحركة
-      r[3],   // القيمة
-      r[4],   // قيمة الضريبة
-      r[5],   // صافي القيمة
-      r[6],   // فاتورة ضريبية
-      r[7],   // رقم الفاتورة
-      r[8],   // المرحلة
-      r[9],   // البند
-      r[10],  // الوصف
-      r[11],  // المشرف
-      approver, // المسجل بواسطة
-      new Date()
-    ]));
-
-    const custodySheet = getOrCreateProjectCustodySheet(project);
-    custodySheet.getRange(custodySheet.getLastRow() + 1, 1, custodyRows.length, custodyRows[0].length).setValues(custodyRows);
-
-    rowNumbers.sort((a, b) => b - a).forEach(rn => pendingSheet.deleteRow(rn));
-
-    return jsonResponse({ ok: true, count: custodyRows.length, project });
+    return jsonResponse({ ok: true, count });
   } catch (err) {
     return jsonResponse({ ok: false, error: err.message });
   }
@@ -956,7 +1063,8 @@ function handleDepositCustody(body) {
       String(body.description || '').trim(),
       supervisor,
       String(body.recordedBy || '').trim(),
-      new Date()
+      new Date(),
+      ''
     ]);
     return jsonResponse({ ok: true, id });
   } catch (err) {

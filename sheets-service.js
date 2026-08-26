@@ -139,6 +139,18 @@ export async function approveDailyLog(batchId, approverEmail) {
     return r;
 }
 
+// موافقة جماعية على أكتر من دفعة يوميات مرة واحدة
+export async function bulkApproveDailyLogs(batchIds, approverEmail) {
+    const r = await callPost({ action: 'bulkApproveDailyLogs', batchIds, approverEmail });
+    clearCache();
+    return r;
+}
+
+// تعليم دفعات يوميات معينة كـ "مطبوعة" عشان الطباعة الجاية تتخطاها
+export async function markDailyLogsPrinted(ids) {
+    return callPost({ action: 'markDailyLogsPrinted', ids });
+}
+
 export async function rejectDailyLog(batchId, approverEmail, reason = '') {
     const r = await callPost({ action: 'rejectDailyLog', batchId, approverEmail, reason });
     clearCache();
@@ -156,6 +168,18 @@ export async function approveCustodyExpense(batchId, approverEmail) {
     const r = await callPost({ action: 'approveCustodyExpense', batchId, approverEmail });
     clearCache();
     return r;
+}
+
+// موافقة جماعية على أكتر من دفعة فواتير عهدة مرة واحدة
+export async function bulkApproveCustody(batchIds, approverEmail) {
+    const r = await callPost({ action: 'bulkApproveCustody', batchIds, approverEmail });
+    clearCache();
+    return r;
+}
+
+// تعليم حركات عهدة معينة كـ "مطبوعة" عشان الطباعة الجاية تتخطاها
+export async function markCustodyPrinted(project, ids) {
+    return callPost({ action: 'markCustodyPrinted', project, ids });
 }
 
 export async function rejectCustodyExpense(batchId, approverEmail, reason = '') {

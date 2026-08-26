@@ -4,6 +4,9 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>تسجيل اليوميات - EXO</title>
+    <link rel="manifest" href="manifest.json">
+    <meta name="theme-color" content="#1e3c72">
+    <link rel="apple-touch-icon" href="icons/icon-192.png">
     <link rel="stylesheet" href="styles.css">
     <script src="https://cdn.tailwindcss.com"></script>
 </head>
@@ -137,6 +140,18 @@
 
     <div id="printArea" class="print-only"></div>
 
+    <nav class="bottom-nav no-print">
+        <a href="home.html" class="bottom-nav-item"><span class="bn-icon">🏠</span><span class="bn-label">الرئيسية</span></a>
+        <a href="daily-logs.html" class="bottom-nav-item active"><span class="bn-icon">📝</span><span class="bn-label">اليوميات</span></a>
+        <a href="custodies.html" class="bottom-nav-item"><span class="bn-icon">💰</span><span class="bn-label">العهد</span></a>
+        <a href="approvals.html" id="bottomNavApprovals" class="bottom-nav-item hidden"><span class="bn-icon">✅</span><span class="bn-label">الموافقات</span></a>
+    </nav>
+
     <script type="module" src="daily-logs.js"></script>
+    <script>
+        if ('serviceWorker' in navigator) {
+            window.addEventListener('load', () => navigator.serviceWorker.register('sw.js').catch(() => {}));
+        }
+    </script>
 </body>
 </html>

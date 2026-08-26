@@ -61,6 +61,115 @@ export function formatDate(ts) {
     return date.toLocaleDateString('ar-EG', { year: 'numeric', month: 'long', day: 'numeric' });
 }
 
+// ═══════════════════════════════════════════════════════════
+// إشعارات Toast خفيفة — بديل المودال لرسائل النجاح/التنبيه
+// البسيطة اللي مش محتاجة توقف المستخدم (بتختفي لوحدها)
+// type: 'success' | 'error' | 'warning' | 'info'
+// ═══════════════════════════════════════════════════════════
+export function showToast(text, type = 'success') {
+    let container = document.getElementById('toastContainer');
+    if (!container) {
+        container = document.createElement('div');
+        container.id = 'toastContainer';
+        container.className = 'toast-container no-print';
+        document.body.appendChild(container);
+    }
+
+    const icons = { success: '✅', error: '❌', warning: '⚠️', info: 'ℹ️' };
+    const toast = document.createElement('div');
+    toast.className = `toast toast-${type}`;
+    toast.innerHTML = `<span class="toast-icon">${icons[type] || icons.info}</span><span class="toast-text">${text}</span>`;
+    container.appendChild(toast);
+
+    requestAnimationFrame(() => toast.classList.add('toast-show'));
+
+    const remove = () => {
+        toast.classList.remove('toast-show');
+        setTimeout(() => toast.remove(), 250);
+    };
+    const timer = setTimeout(remove, type === 'error' ? 4500 : 2800);
+    toast.addEventListener('click', () => { clearTimeout(timer); remove(); });
+}
+
+// ═══════════════════════════════════════════════════════════
+// مودال تأكيد بنفس هوية تصميم الموقع — بديل confirm() الافتراضي
+// بيرجع Promise<boolean>: true لو ضغط تأكيد، false لو ألغى
+// ═══════════════════════════════════════════════════════════
+export function showConfirm(message, { confirmText = 'تأكيد', cancelText = 'إلغاء', danger = false } = {}) {
+    return new Promise(resolve => {
+        const overlay = document.createElement('div');
+        overlay.className = 'confirm-backdrop';
+        overlay.innerHTML = `
+            <div class="confirm-box">
+                <p class="confirm-message">${message}</p>
+                <div class="confirm-actions">
+                    <button type="button" class="confirm-cancel">${cancelText}</button>
+                    <button type="button" class="confirm-ok ${danger ? 'confirm-danger' : ''}">${confirmText}</button>
+                </div>
+            </div>`;
+        document.body.appendChild(overlay);
+        requestAnimationFrame(() => overlay.classList.add('confirm-show'));
+
+        const cleanup = (result) => {
+            overlay.classList.remove('confirm-show');
+            setTimeout(() => overlay.remove(), 200);
+            resolve(result);
+        };
+        overlay.querySelector('.confirm-ok').addEventListener('click', () => cleanup(true));
+        overlay.querySelector('.confirm-cancel').addEventListener('click', () => cleanup(false));
+        overlay.addEventListener('click', (e) => { if (e.target === overlay) cleanup(false); });
+    });
+}
+
+// ═══════════════════════════════════════════════════════════
+// مودال إدخال نص بنفس هوية التصميم — بديل prompt() الافتراضي
+// بيرجع Promise<string|null>: النص لو ضغط تأكيد، null لو ألغى
+// ═══════════════════════════════════════════════════════════
+export function showPrompt(message, { placeholder = '', okText = 'تأكيد', cancelText = 'إلغاء' } = {}) {
+    return new Promise(resolve => {
+        const overlay = document.createElement('div');
+        overlay.className = 'confirm-backdrop';
+        overlay.innerHTML = `
+            <div class="confirm-box">
+                <p class="confirm-message">${message}</p>
+                <textarea class="confirm-input" rows="2" placeholder="${placeholder}"></textarea>
+                <div class="confirm-actions">
+                    <button type="button" class="confirm-cancel">${cancelText}</button>
+                    <button type="button" class="confirm-ok">${okText}</button>
+                </div>
+            </div>`;
+        document.body.appendChild(overlay);
+        requestAnimationFrame(() => overlay.classList.add('confirm-show'));
+        const input = overlay.querySelector('.confirm-input');
+        setTimeout(() => input.focus(), 150);
+
+        const cleanup = (result) => {
+            overlay.classList.remove('confirm-show');
+            setTimeout(() => overlay.remove(), 200);
+            resolve(result);
+        };
+        overlay.querySelector('.confirm-ok').addEventListener('click', () => cleanup(input.value.trim()));
+        overlay.querySelector('.confirm-cancel').addEventListener('click', () => cleanup(null));
+        overlay.addEventListener('click', (e) => { if (e.target === overlay) cleanup(null); });
+    });
+}
+
+// ═══════════════════════════════════════════════════════════
+// سطور Skeleton بديلة لنص "جاري التحميل..." أثناء انتظار الشيت
+// ═══════════════════════════════════════════════════════════
+export function skeletonCards(count = 3) {
+    return Array.from({ length: count }, () => `
+        <div class="skeleton-card">
+            <div class="skeleton-line w-60"></div>
+            <div class="skeleton-line w-40"></div>
+        </div>
+    `).join('');
+}
+
+export function skeletonRows(count = 4) {
+    return Array.from({ length: count }, () => `<tr class="skeleton-row"><td colspan="99"><div class="skeleton-line w-100"></div></td></tr>`).join('');
+}
+
 export function formatCurrency(amount) {
     return Number(amount).toLocaleString('ar-EG') + ' ر.س';
 }
