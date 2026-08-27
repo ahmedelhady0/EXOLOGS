@@ -176,11 +176,26 @@ function newId_(prefix) {
   return prefix + '-' + Utilities.formatDate(new Date(), Session.getScriptTimeZone(), 'yyyyMMdd-HHmmss') + '-' + Math.floor(Math.random() * 1000);
 }
 
-// تفسير قيمة عمود "مطبوعة" (ممكن تتخزن Boolean أو 'TRUE'/'نعم' نصياً)
+// تفسير قيمة عمود "رقم الكشف" — ممكن تكون Boolean قديمة (TRUE) أو رقم كشف
+// جديد ("1", "2", ...)؛ أي قيمة غير فاضية وغير "false" تعتبر "مطبوعة/متسواة"
 function isTruthyFlag_(v) {
   if (v === true) return true;
-  const s = String(v || '').trim().toLowerCase();
-  return s === 'true' || s === 'نعم' || s === '1';
+  if (v === false || v === null || v === undefined) return false;
+  const s = String(v).trim();
+  if (s === '' || s.toLowerCase() === 'false') return false;
+  return true;
+}
+
+// يحسب رقم الكشف التالي في عمود معيّن (أكبر رقم Numeric موجود في العمود + 1)،
+// وبيتجاهل القيم القديمة اللي كانت Boolean (TRUE) من قبل ما يتضاف نظام أرقام الكشوف
+function nextStatementNumber_(sheet, colIndex, headerIdx) {
+  const values = sheet.getDataRange().getValues();
+  let max = 0;
+  for (let i = headerIdx + 1; i < values.length; i++) {
+    const n = parseInt(String(values[i][colIndex] || '').trim(), 10);
+    if (!isNaN(n) && n > max) max = n;
+  }
+  return max + 1;
 }
 
 // ═══════════════════════════════════════════════════════════
@@ -205,9 +220,9 @@ function getOrCreateDailyLogsSheet() {
   let sheet = ss.getSheetByName(SHEET_NAMES.dailyLogs);
   if (!sheet) {
     sheet = ss.insertSheet(SHEET_NAMES.dailyLogs);
-    sheet.appendRow(['ID', 'التاريخ', 'المشروع', 'المرحلة', 'نوع اليومية', 'اسم النوع', 'الكمية', 'سعر الوحدة', 'الإجمالي', 'ملاحظات', 'المشرف', 'تاريخ التسجيل', 'مطبوعة']);
+    sheet.appendRow(['ID', 'التاريخ', 'المشروع', 'المرحلة', 'نوع اليومية', 'اسم النوع', 'الكمية', 'سعر الوحدة', 'الإجمالي', 'ملاحظات', 'المشرف', 'تاريخ التسجيل', 'رقم الكشف']);
   } else {
-    ensureColumn_(sheet, 'مطبوعة');
+    ensureColumn_(sheet, 'رقم الكشف');
   }
   return sheet;
 }
@@ -265,9 +280,9 @@ function getOrCreateProjectCustodySheet(project) {
   let sheet = ss.getSheetByName(name);
   if (!sheet) {
     sheet = ss.insertSheet(name);
-    sheet.appendRow(['ID', 'التاريخ', 'نوع الحركة', 'القيمة', 'قيمة الضريبة', 'صافي القيمة', 'فاتورة ضريبية', 'رقم الفاتورة', 'المرحلة', 'البند', 'الوصف', 'المشرف', 'المسجل بواسطة', 'تاريخ التسجيل', 'مطبوعة']);
+    sheet.appendRow(['ID', 'التاريخ', 'نوع الحركة', 'القيمة', 'قيمة الضريبة', 'صافي القيمة', 'فاتورة ضريبية', 'رقم الفاتورة', 'المرحلة', 'البند', 'الوصف', 'المشرف', 'المسجل بواسطة', 'تاريخ التسجيل', 'رقم الكشف']);
   } else {
-    ensureColumn_(sheet, 'مطبوعة');
+    ensureColumn_(sheet, 'رقم الكشف');
   }
   return sheet;
 }
@@ -561,7 +576,9 @@ function mapDailyLog_(logs, forcedStatus) {
     supervisor: l['المشرف'],
     status: forcedStatus || String(l['الحالة'] || '').trim(),
     rejectReason: l['سبب الرفض'] || '',
-    printed: isTruthyFlag_(l['مطبوعة'])
+    printed: isTruthyFlag_(l['رقم الكشف']),
+    statementId: (String(l['رقم الكشف'] || '').trim() && String(l['رقم الكشف']).trim().toLowerCase() !== 'true')
+      ? String(l['رقم الكشف']).trim() : null
   }));
 }
 
@@ -622,7 +639,9 @@ function handleGetProjectCustody(e) {
       item: m['البند'],
       description: m['الوصف'],
       supervisor: m['المشرف'],
-      printed: isTruthyFlag_(m['مطبوعة'])
+      printed: isTruthyFlag_(m['رقم الكشف']),
+      statementId: (String(m['رقم الكشف'] || '').trim() && String(m['رقم الكشف']).trim().toLowerCase() !== 'true')
+        ? String(m['رقم الكشف']).trim() : null
     })),
     summary: {
       totalDeposit: Math.round(totalDeposit * 100) / 100,
@@ -757,7 +776,7 @@ function approveDailyLogCore_(batchId) {
   const values = pendingSheet.getDataRange().getValues();
   const headerIdx = getHeaderRowIndex(pendingSheet);
 
-  // نجمع صفوف الدفعة (أول 12 عمود = أعمدة سجل اليوميات + عمود "مطبوعة" فاضي)
+  // نجمع صفوف الدفعة (أول 12 عمود = أعمدة سجل اليوميات + عمود "رقم الكشف" فاضي)
   const rowsToMove = [];
   const rowNumbers = [];
   for (let i = headerIdx + 1; i < values.length; i++) {
@@ -806,7 +825,9 @@ function handleBulkApproveDailyLogs(body) {
 }
 
 // المشرف يعلّم دفعات يوميات معينة كـ "مطبوعة" (بعد ما يطبعها/يسلّمها) عشان
-// طباعة السجل الجاية تعرض بس اليوميات الجديدة اللي لسه ما اتطبعتش
+// طباعة السجل الجاية تعرض بس اليوميات الجديدة اللي لسه ما اتطبعتش.
+// كل مرة بيتعمل فيها تسوية، بناخد رقم كشف جديد ونعلّمه على كل الصفوف دي —
+// عشان بعدين تقدر تبحث/تطبع نفس الكشف ده تاني بأي وقت من "كشوف سابقة"
 function handleMarkDailyLogsPrinted(body) {
   try {
     const ids = Array.isArray(body && body.ids) ? body.ids.map(String) : [];
@@ -815,18 +836,20 @@ function handleMarkDailyLogsPrinted(body) {
     const sheet = getOrCreateDailyLogsSheet();
     const headers = getNormalizedHeaders(sheet);
     const idCol = headers.indexOf('ID');
-    const printedCol = headers.indexOf('مطبوعة');
+    const printedCol = headers.indexOf('رقم الكشف');
     const headerIdx = getHeaderRowIndex(sheet);
     const values = sheet.getDataRange().getValues();
+
+    const statementNo = nextStatementNumber_(sheet, printedCol, headerIdx);
 
     let count = 0;
     for (let i = headerIdx + 1; i < values.length; i++) {
       if (ids.indexOf(String(values[i][idCol]).trim()) !== -1) {
-        sheet.getRange(i + 1, printedCol + 1).setValue(true);
+        sheet.getRange(i + 1, printedCol + 1).setValue(statementNo);
         count++;
       }
     }
-    return jsonResponse({ ok: true, count });
+    return jsonResponse({ ok: true, count, statementId: String(statementNo) });
   } catch (err) {
     return jsonResponse({ ok: false, error: err.message });
   }
@@ -979,7 +1002,9 @@ function handleBulkApproveCustody(body) {
 }
 
 // المشرف يعلّم حركات عهدة معينة كـ "مطبوعة" (بعد ما يطبعها ويسلّمها للمحاسب)
-// عشان طباعة كشف الحساب الجاية تعرض بس الحركات الجديدة اللي لسه ما اتطبعتش
+// عشان طباعة كشف الحساب الجاية تعرض بس الحركات الجديدة اللي لسه ما اتطبعتش.
+// كل مرة بيتعمل فيها تسوية، بناخد رقم كشف جديد ونعلّمه على كل الحركات دي —
+// عشان بعدين تقدر تطبع نفس الكشف ده تاني بأي وقت من "كشوف سابقة"
 function handleMarkCustodyPrinted(body) {
   try {
     const project = String((body && body.project) || '').trim();
@@ -990,18 +1015,20 @@ function handleMarkCustodyPrinted(body) {
     const sheet = getOrCreateProjectCustodySheet(project);
     const headers = getNormalizedHeaders(sheet);
     const idCol = headers.indexOf('ID');
-    const printedCol = headers.indexOf('مطبوعة');
+    const printedCol = headers.indexOf('رقم الكشف');
     const headerIdx = getHeaderRowIndex(sheet);
     const values = sheet.getDataRange().getValues();
+
+    const statementNo = nextStatementNumber_(sheet, printedCol, headerIdx);
 
     let count = 0;
     for (let i = headerIdx + 1; i < values.length; i++) {
       if (ids.indexOf(String(values[i][idCol]).trim()) !== -1) {
-        sheet.getRange(i + 1, printedCol + 1).setValue(true);
+        sheet.getRange(i + 1, printedCol + 1).setValue(statementNo);
         count++;
       }
     }
-    return jsonResponse({ ok: true, count });
+    return jsonResponse({ ok: true, count, statementId: String(statementNo) });
   } catch (err) {
     return jsonResponse({ ok: false, error: err.message });
   }

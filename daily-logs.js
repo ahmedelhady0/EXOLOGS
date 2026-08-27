@@ -42,6 +42,8 @@ const printSelectedBtn = document.getElementById('printSelectedBtn');
 const selectedCountEl = document.getElementById('selectedCount');
 const shownCountEl = document.getElementById('shownCount');
 const dailySelectAllVisible = document.getElementById('dailySelectAllVisible');
+const dailyStatementSelect = document.getElementById('dailyStatementSelect');
+const printDailyStatementBtn = document.getElementById('printDailyStatementBtn');
 
 refreshBtn?.addEventListener('click', refreshData);
 
@@ -103,6 +105,10 @@ onAuthStateChanged(auth, async (user) => {
     dailySelectAllVisible?.addEventListener('change', handleSelectAllVisible);
     printShownBtn?.addEventListener('click', handlePrintShown);
     printSelectedBtn?.addEventListener('click', handlePrintSelected);
+    dailyStatementSelect?.addEventListener('change', () => {
+        printDailyStatementBtn.disabled = !dailyStatementSelect.value;
+    });
+    printDailyStatementBtn?.addEventListener('click', handlePrintDailyStatement);
 });
 
 function applySetupData(data, roleLoadFailed) {
@@ -416,6 +422,7 @@ function renderRecentLogs() {
     try {
         allDailyBatches = buildDailyBatches(lastLogs);
         applyDailyFilters(); // بيبنّي filteredDailyBatches ويحدّث الواجهة
+        populateDailyStatementSelect();
     } catch (err) {
         console.error(err);
         recentLogs.innerHTML = '<p class="text-center text-red-500 text-sm">فشل تحميل السجل</p>';
@@ -465,8 +472,9 @@ function renderFilteredBatches() {
     recentLogs.innerHTML = filteredDailyBatches.map(b => {
         const batchTotal = b.items.reduce((s, i) => s + (Number(i.totalCost) || 0), 0);
         const allPrinted = b.items.every(i => i.printed);
+        const statementId = allPrinted ? (b.items.find(i => i.statementId)?.statementId || '') : '';
         const statusBadge = allPrinted
-            ? '<span class="type-badge badge-deposit">مطبوعة</span>'
+            ? `<span class="type-badge badge-deposit">كشف ${statementId}</span>`
             : '<span class="type-badge badge-pending">جديدة</span>';
         return `
             <div class="p-4 mb-3 rounded-xl flex gap-3" style="border:1px solid rgba(30,60,114,0.12); background:rgba(255,255,255,0.6);">
@@ -644,7 +652,8 @@ function handlePrintLogs() {
 }
 
 // بعد الطباعة، نسأل نتأكد إن السجل ده اتسلّم/اتسوى — لو أكد، بنعلّم
-// اليوميات دي "مطبوعة" عشان متتكررش في طباعة السجل الجاية
+// اليوميات دي "مطبوعة" برقم كشف جديد عشان متتكررش في طباعة السجل الجاية،
+// وتقدر بعدين ترجع تطبع نفس الكشف ده تاني من "كشوف سابقة"
 async function askMarkLogsPrinted(ids) {
     const ok = await showConfirm(
         'تم تسليم هذا السجل للمحاسب وتسويته؟\nلو أكدت، اليوميات دي مش هتظهر تاني في طباعة السجل الجاية.',
@@ -652,12 +661,74 @@ async function askMarkLogsPrinted(ids) {
     );
     if (!ok) return;
     try {
-        await markDailyLogsPrinted(ids);
-        lastLogs.forEach(l => { if (ids.includes(l.id)) l.printed = true; });
-        showToast('تم تعليم اليوميات كمطبوعة/متسواة', 'success');
+        const r = await markDailyLogsPrinted(ids);
+        const statementId = r && r.statementId ? String(r.statementId) : null;
+        lastLogs.forEach(l => {
+            if (ids.includes(l.id)) { l.printed = true; if (statementId) l.statementId = statementId; }
+        });
+        renderRecentLogs();
+        showToast(statementId ? `تم تعليم اليوميات ضمن كشف رقم ${statementId}` : 'تم تعليم اليوميات كمطبوعة/متسواة', 'success');
     } catch (err) {
         showToast('تعذر تعليم اليوميات: ' + err.message, 'error');
     }
+}
+
+// ── كشوف سابقة (تسويات اتأكدت قبل كده) — استرجاع وإعادة طباعة أي كشف ────
+function populateDailyStatementSelect() {
+    if (!dailyStatementSelect) return;
+    const statements = {};
+    lastLogs.forEach(l => {
+        if (!l.statementId) return;
+        if (!statements[l.statementId]) statements[l.statementId] = { id: l.statementId, count: 0, total: 0, dates: [] };
+        statements[l.statementId].count++;
+        statements[l.statementId].total += Number(l.totalCost) || 0;
+        statements[l.statementId].dates.push(l.date);
+    });
+    const list = Object.values(statements).sort((a, b) => Number(b.id) - Number(a.id));
+
+    if (!list.length) {
+        dailyStatementSelect.innerHTML = '<option value="">— لا توجد كشوف سابقة —</option>';
+        printDailyStatementBtn.disabled = true;
+        return;
+    }
+    dailyStatementSelect.innerHTML = '<option value="">— اختر كشف سابق —</option>' +
+        list.map(s => {
+            const dates = s.dates.filter(Boolean).sort();
+            const range = dates.length ? `${formatDate(dates[0])} → ${formatDate(dates[dates.length - 1])}` : '';
+            return `<option value="${s.id}">كشف رقم ${s.id} — ${s.count} بند — ${formatCurrency(s.total)} ${range ? '(' + range + ')' : ''}</option>`;
+        }).join('');
+}
+
+function handlePrintDailyStatement() {
+    const statementId = dailyStatementSelect.value;
+    if (!statementId) return;
+    const logs = lastLogs.filter(l => l.statementId === statementId);
+    if (!logs.length) { showToast('تعذر إيجاد بنود هذا الكشف', 'error'); return; }
+
+    const batches = buildDailyBatches(logs);
+    const rows = [];
+    let grandTotal = 0;
+    batches.forEach(b => {
+        b.items.forEach(i => {
+            const cost = Number(i.totalCost) || 0;
+            grandTotal += cost;
+            rows.push([formatDate(b.date), b.project, i.typeName, i.phase, i.quantity, formatCurrency(cost)]);
+        });
+    });
+
+    printReport({
+        title: `سجل اليوميات المعتمدة (كشف رقم ${statementId})`,
+        subtitle: isAdmin ? '' : currentUsername,
+        metaLines: [
+            `المشرف: ${currentUsername}`,
+            `تاريخ إعادة الطباعة: ${new Date().toLocaleDateString('ar-EG', { year: 'numeric', month: 'long', day: 'numeric' })}`,
+            `عدد الدفعات: ${batches.length}`
+        ],
+        columns: ['التاريخ', 'المشروع', 'النوع', 'المرحلة', 'الكمية', 'التكلفة'],
+        rows,
+        totalsRow: ['', '', '', '', 'الإجمالي', formatCurrency(grandTotal)]
+    });
+    // ده استرجاع لكشف اتسوّى قبل كده — مفيش تسوية جديدة تتسأل هنا
 }
 
 function formatDate(dateStr) {

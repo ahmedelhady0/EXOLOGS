@@ -186,6 +186,14 @@ export function formatCurrency(amount) {
 // totalsRow: صف إجمالي اختياري يظهر في أسفل الجدول
 // showSignatures: يظهر خانات توقيع (مشرف/مهندس/إدارة) في آخر الصفحة
 // ═══════════════════════════════════════════════════════════
+// طباعة الأرقام دايمًا بالإنجليزي (Western digits) حتى لو النص العربي جاي
+// بأرقام هندية (١٢٣...) من toLocaleString('ar-EG') أو أي مصدر تاني
+function toEnglishDigits(v) {
+    if (v === null || v === undefined) return v;
+    const map = { '٠': '0', '١': '1', '٢': '2', '٣': '3', '٤': '4', '٥': '5', '٦': '6', '٧': '7', '٨': '8', '٩': '9', '٫': '.', '٬': ',' };
+    return String(v).replace(/[٠-٩٫٬]/g, (d) => map[d]);
+}
+
 export function printReport({
     title, subtitle = '', metaLines = [], columns = [], rows = [],
     totalsRow = null, showSignatures = true, emptyText = 'لا توجد بيانات'
@@ -199,14 +207,14 @@ export function printReport({
     }
 
     const rowsHtml = rows.length
-        ? rows.map(r => `<tr>${r.map(c => `<td>${c ?? '-'}</td>`).join('')}</tr>`).join('')
+        ? rows.map(r => `<tr>${r.map(c => `<td>${toEnglishDigits(c ?? '-')}</td>`).join('')}</tr>`).join('')
         : `<tr><td colspan="${columns.length}" style="padding:16px;color:#999;">${emptyText}</td></tr>`;
 
     const totalsHtml = (totalsRow && rows.length)
-        ? `<tfoot><tr>${totalsRow.map(c => `<td>${c ?? ''}</td>`).join('')}</tr></tfoot>`
+        ? `<tfoot><tr>${totalsRow.map(c => `<td>${toEnglishDigits(c ?? '')}</td>`).join('')}</tr></tfoot>`
         : '';
 
-    const metaHtml = metaLines.filter(Boolean).join('<br>');
+    const metaHtml = metaLines.filter(Boolean).map(toEnglishDigits).join('<br>');
 
     const signaturesHtml = showSignatures ? `
         <div class="print-signatures">
@@ -221,17 +229,17 @@ export function printReport({
             <div class="print-letterhead">
                 <div>
                     <div class="company-name">🏗️ ${companyName}</div>
-                    <div class="report-title">${title}${subtitle ? ' — ' + subtitle : ''}</div>
+                    <div class="report-title">${toEnglishDigits(title)}${subtitle ? ' — ' + toEnglishDigits(subtitle) : ''}</div>
                 </div>
                 <div class="report-meta">${metaHtml}</div>
             </div>
             <table>
-                <thead><tr>${columns.map(c => `<th>${c}</th>`).join('')}</tr></thead>
+                <thead><tr>${columns.map(c => `<th>${toEnglishDigits(c)}</th>`).join('')}</tr></thead>
                 <tbody>${rowsHtml}</tbody>
                 ${totalsHtml}
             </table>
             ${signaturesHtml}
-            <div class="print-footer">تم إنشاء هذا التقرير آلياً من نظام ${companyName} — ${new Date().toLocaleString('ar-EG')}</div>
+            <div class="print-footer">${toEnglishDigits(`تم إنشاء هذا التقرير آلياً من نظام ${companyName} — ${new Date().toLocaleString('ar-EG')}`)}</div>
         </div>
     `;
 

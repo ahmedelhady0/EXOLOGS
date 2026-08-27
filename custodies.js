@@ -32,6 +32,16 @@ const addInvoiceBtn = document.getElementById('addInvoiceBtn');
 const submitCustodyBtn = document.getElementById('submitCustodyBtn');
 const printLedgerBtn = document.getElementById('printLedgerBtn');
 const printCartBtn = document.getElementById('printCartBtn');
+const filterCustFrom = document.getElementById('filterCustFrom');
+const filterCustTo = document.getElementById('filterCustTo');
+const filterCustType = document.getElementById('filterCustType');
+const printShownMovementsBtn = document.getElementById('printShownMovementsBtn');
+const printSelectedMovementsBtn = document.getElementById('printSelectedMovementsBtn');
+const movSelectedCountEl = document.getElementById('movSelectedCount');
+const custShownCountEl = document.getElementById('custShownCount');
+const custSelectAllVisible = document.getElementById('custSelectAllVisible');
+const custStatementSelect = document.getElementById('custStatementSelect');
+const printStatementBtn = document.getElementById('printStatementBtn');
 
 refreshBtn?.addEventListener('click', refreshData);
 invDate.value = todayStr();
@@ -48,7 +58,9 @@ let allUsers = [];
 let selectedProject = '';
 let cart = []; // سلة الفواتير قبل الإرسال
 let lastSummary = {};   // آخر ملخص عهدة محمّل (للطباعة)
-let lastMovements = []; // آخر حركات محمّلة (للطباعة)
+let lastMovements = []; // كل حركات المشروع المحمّلة (قبل الفلترة)
+let filteredMovements = []; // الحركات بعد تطبيق فلتر التاريخ/النوع (اللي هتتعرّض للمستخدم)
+const selectedMovementIdx = new Set(); // مؤشرات (index) الحركات المحددة للطباعة الجماعية
 
 onAuthStateChanged(auth, async (user) => {
     if (!user) { window.location.href = 'index.html'; return; }
@@ -93,6 +105,16 @@ onAuthStateChanged(auth, async (user) => {
     submitCustodyBtn.addEventListener('click', handleSubmitCustody);
     printLedgerBtn?.addEventListener('click', handlePrintLedger);
     printCartBtn?.addEventListener('click', handlePrintCart);
+    filterCustFrom?.addEventListener('input', applyCustodyFilters);
+    filterCustTo?.addEventListener('input', applyCustodyFilters);
+    filterCustType?.addEventListener('change', applyCustodyFilters);
+    custSelectAllVisible?.addEventListener('change', handleSelectAllVisibleMovements);
+    printShownMovementsBtn?.addEventListener('click', handlePrintShownMovements);
+    printSelectedMovementsBtn?.addEventListener('click', handlePrintSelectedMovements);
+    custStatementSelect?.addEventListener('change', () => {
+        printStatementBtn.disabled = !custStatementSelect.value;
+    });
+    printStatementBtn?.addEventListener('click', handlePrintStatement);
 });
 
 async function loadSetup(forceRefresh = false) {
@@ -200,7 +222,8 @@ async function loadProjectCustody() {
         lastSummary = data.summary || {};
         lastMovements = data.movements || [];
         renderSummary(lastSummary);
-        renderMovements(lastMovements);
+        applyCustodyFilters();
+        populateStatementSelect();
     } catch (err) {
         console.error(err);
     }
@@ -221,32 +244,215 @@ function renderSummary(s) {
     document.getElementById('custNegativeAlert').classList.toggle('hidden', remaining >= 0);
 }
 
+// ── فلترة سجل الحركات بالتاريخ والنوع ──────────────────
+function applyCustodyFilters() {
+    const from = filterCustFrom?.value;
+    const to = filterCustTo?.value;
+    const type = filterCustType?.value || '';
+
+    filteredMovements = lastMovements.filter(m => {
+        const isDeposit = m.type === 'إيداع عهدة';
+        if (type === 'deposit' && !isDeposit) return false;
+        if (type === 'expense' && isDeposit) return false;
+        if (from && new Date(m.date || 0) < new Date(from)) return false;
+        if (to && new Date(m.date || 0) > new Date(to)) return false;
+        return true;
+    });
+
+    selectedMovementIdx.clear();
+    renderMovements(filteredMovements);
+}
+
 function renderMovements(movements) {
     const tbody = document.getElementById('custMovementsList');
     const empty = document.getElementById('custMovementsEmpty');
     tbody.innerHTML = '';
+    updateMovementsToolbar();
 
     if (!movements.length) {
         empty.classList.remove('hidden');
+        custShownCountEl.textContent = '';
         return;
     }
     empty.classList.add('hidden');
+    custShownCountEl.textContent = `الظاهر: ${movements.length} حركة`;
 
-    movements.forEach(m => {
+    movements.forEach((m, idx) => {
         const isDeposit = m.type === 'إيداع عهدة';
         const amt = Number(m.amount) || 0;
         const row = document.createElement('tr');
         row.innerHTML = `
+            <td class="no-print"><input type="checkbox" class="movement-select" data-idx="${idx}"></td>
             <td class="whitespace-nowrap">${formatDate(m.date)}</td>
             <td><span class="type-badge ${isDeposit ? 'badge-deposit' : 'badge-expense'}">${isDeposit ? 'إيداع' : 'صرف'}</span></td>
             <td>${m.item || '-'}</td>
             <td>${m.description || '-'}</td>
             <td>${(m.isTax === 'نعم' || m.isTax === true) ? '✅' : '—'}</td>
             <td class="font-bold whitespace-nowrap" style="color:${isDeposit ? '#059669' : '#dc2626'}">${isDeposit ? '+' : '−'} ${formatCurrency(amt)}</td>
-            <td>${m.printed ? '<span class="type-badge badge-deposit">مطبوعة</span>' : '<span class="type-badge badge-pending">جديدة</span>'}</td>
+            <td>${m.printed ? `<span class="type-badge badge-deposit">كشف ${m.statementId || ''}</span>` : '<span class="type-badge badge-pending">جديدة</span>'}</td>
+            <td class="no-print"><button type="button" data-print-idx="${idx}" class="print-btn py-1 px-2 text-xs font-bold">🖨️</button></td>
         `;
         tbody.appendChild(row);
     });
+
+    tbody.querySelectorAll('.movement-select').forEach(cb => {
+        cb.addEventListener('change', () => {
+            const idx = Number(cb.dataset.idx);
+            if (cb.checked) selectedMovementIdx.add(idx); else selectedMovementIdx.delete(idx);
+            syncCustSelectAllCheckbox();
+            updateMovementsToolbar();
+        });
+    });
+    tbody.querySelectorAll('[data-print-idx]').forEach(btn => {
+        btn.addEventListener('click', () => {
+            const idx = Number(btn.dataset.printIdx);
+            printMovementsList([movements[idx]]);
+        });
+    });
+}
+
+function updateMovementsToolbar() {
+    if (movSelectedCountEl) movSelectedCountEl.textContent = selectedMovementIdx.size;
+    if (printSelectedMovementsBtn) printSelectedMovementsBtn.disabled = selectedMovementIdx.size === 0;
+    if (printShownMovementsBtn) printShownMovementsBtn.disabled = filteredMovements.length === 0;
+}
+
+function syncCustSelectAllCheckbox() {
+    if (!custSelectAllVisible) return;
+    custSelectAllVisible.checked = filteredMovements.length > 0 && selectedMovementIdx.size === filteredMovements.length;
+}
+
+function handleSelectAllVisibleMovements() {
+    if (custSelectAllVisible.checked) {
+        filteredMovements.forEach((_, idx) => selectedMovementIdx.add(idx));
+    } else {
+        selectedMovementIdx.clear();
+    }
+    document.querySelectorAll('.movement-select').forEach(cb => { cb.checked = custSelectAllVisible.checked; });
+    updateMovementsToolbar();
+}
+
+function handlePrintShownMovements() {
+    printMovementsList(filteredMovements);
+}
+
+function handlePrintSelectedMovements() {
+    const rows = Array.from(selectedMovementIdx).sort((a, b) => a - b).map(idx => filteredMovements[idx]);
+    printMovementsList(rows);
+}
+
+// دالة عامة بتطبع أي مجموعة حركات (ظاهرة / محددة / حركة واحدة)، وبعدين
+// تسأل تسوية بس للحركات اللي فعلاً لسه "جديدة" ضمن المجموعة دي
+function printMovementsList(movements) {
+    if (!movements.length) { showToast('لا توجد حركات للطباعة', 'info'); return; }
+
+    const rows = movements.map(m => {
+        const isDeposit = m.type === 'إيداع عهدة';
+        const amt = Number(m.amount) || 0;
+        return [
+            formatDate(m.date),
+            isDeposit ? 'إيداع' : 'صرف',
+            m.item || '-',
+            m.description || '-',
+            (m.isTax === 'نعم' || m.isTax === true) ? 'نعم' : '—',
+            (isDeposit ? '+ ' : '− ') + formatCurrency(amt)
+        ];
+    });
+    const total = movements.reduce((s, m) => s + (m.type === 'إيداع عهدة' ? 1 : -1) * (Number(m.amount) || 0), 0);
+
+    printReport({
+        title: 'كشف حساب عهدة مشروع',
+        subtitle: selectedProject,
+        metaLines: [
+            `المشرف: ${isAdmin ? 'كل المشرفين' : currentUsername}`,
+            `تاريخ الطباعة: ${new Date().toLocaleDateString('ar-EG', { year: 'numeric', month: 'long', day: 'numeric' })}`,
+            `عدد الحركات: ${movements.length}`,
+            `إجمالي هذا الكشف: ${formatCurrency(total)}`
+        ],
+        columns: ['التاريخ', 'النوع', 'البند', 'الوصف', 'ضريبية', 'القيمة'],
+        rows,
+        totalsRow: ['', '', '', '', 'الإجمالي', formatCurrency(total)]
+    });
+
+    // نسأل تسوية بس للحركات الجديدة ضمن المجموعة المطبوعة (المطبوعة فعلاً قبل كده تتجاهل)
+    const unsettledIds = [...new Set(movements.filter(m => !m.printed).map(m => m.id))];
+    if (unsettledIds.length) askMarkCustodyPrinted(unsettledIds);
+}
+
+// ── كشوف سابقة (تسويات اتأكدت قبل كده) — استرجاع وإعادة طباعة أي كشف ────
+function populateStatementSelect() {
+    if (!custStatementSelect) return;
+    const statements = {};
+    lastMovements.forEach(m => {
+        if (!m.statementId) return;
+        if (!statements[m.statementId]) statements[m.statementId] = { id: m.statementId, count: 0, total: 0, dates: [] };
+        statements[m.statementId].count++;
+        statements[m.statementId].total += (m.type === 'إيداع عهدة' ? 1 : -1) * (Number(m.amount) || 0);
+        statements[m.statementId].dates.push(m.date);
+    });
+    const list = Object.values(statements).sort((a, b) => Number(b.id) - Number(a.id));
+
+    if (!list.length) {
+        custStatementSelect.innerHTML = '<option value="">— لا توجد كشوف سابقة —</option>';
+        printStatementBtn.disabled = true;
+        return;
+    }
+    custStatementSelect.innerHTML = '<option value="">— اختر كشف سابق —</option>' +
+        list.map(s => {
+            const dates = s.dates.filter(Boolean).sort();
+            const range = dates.length ? `${formatDate(dates[0])} → ${formatDate(dates[dates.length - 1])}` : '';
+            return `<option value="${s.id}">كشف رقم ${s.id} — ${s.count} حركة — ${formatCurrency(s.total)} ${range ? '(' + range + ')' : ''}</option>`;
+        }).join('');
+}
+
+function handlePrintStatement() {
+    const statementId = custStatementSelect.value;
+    if (!statementId) return;
+    const movements = lastMovements.filter(m => m.statementId === statementId);
+    if (!movements.length) { showToast('تعذر إيجاد حركات هذا الكشف', 'error'); return; }
+
+    const rows = movements.map(m => {
+        const isDeposit = m.type === 'إيداع عهدة';
+        const amt = Number(m.amount) || 0;
+        return [
+            formatDate(m.date),
+            isDeposit ? 'إيداع' : 'صرف',
+            m.item || '-',
+            m.description || '-',
+            (m.isTax === 'نعم' || m.isTax === true) ? 'نعم' : '—',
+            (isDeposit ? '+ ' : '− ') + formatCurrency(amt)
+        ];
+    });
+    const total = movements.reduce((s, m) => s + (m.type === 'إيداع عهدة' ? 1 : -1) * (Number(m.amount) || 0), 0);
+
+    printReport({
+        title: `كشف حساب عهدة مشروع (كشف رقم ${statementId})`,
+        subtitle: selectedProject,
+        metaLines: [
+            `المشرف: ${isAdmin ? 'كل المشرفين' : currentUsername}`,
+            `تاريخ إعادة الطباعة: ${new Date().toLocaleDateString('ar-EG', { year: 'numeric', month: 'long', day: 'numeric' })}`,
+            `عدد الحركات: ${movements.length}`,
+            `إجمالي هذا الكشف: ${formatCurrency(total)}`
+        ],
+        columns: ['التاريخ', 'النوع', 'البند', 'الوصف', 'ضريبية', 'القيمة'],
+        rows,
+        totalsRow: ['', '', '', '', 'الإجمالي', formatCurrency(total)]
+    });
+    // ده استرجاع لكشف اتسوّى قبل كده — مفيش تسوية جديدة تتسأل هنا
+}
+
+// ── طباعة كشف حساب العهدة الكامل (كل الحركات المعتمدة اللي لسه ما اتسوتش) ──
+// بنطبع بس الحركات اللي لسه "جديدة" (ما اتعلمتش مطبوعة قبل كده)، عشان
+// لو المحاسب استلم كشف الأسبوع اللي فات وسواه، الكشف الجاي ميكررهوش
+function handlePrintLedger() {
+    if (!selectedProject) { showToast('اختر المشروع أولاً لطباعة كشف حسابه', 'warning'); return; }
+
+    const unsettled = lastMovements.filter(m => !m.printed);
+    if (!unsettled.length) {
+        showToast('لا توجد حركات جديدة — كل الحركات اتطبعت وتم تسويتها من قبل', 'info');
+        return;
+    }
+    printMovementsList(unsettled);
 }
 
 // ── فواتيري قيد المراجعة (للمشرف) ──────────────────────
@@ -406,53 +612,9 @@ async function handleSubmitCustody() {
     }
 }
 
-// ── طباعة كشف حساب العهدة (الحركات المعتمدة اللي لسه ما اتسوتش) ───────
-// بنطبع بس الحركات اللي لسه "جديدة" (ما اتعلمتش مطبوعة قبل كده)، عشان
-// لو المحاسب استلم كشف الأسبوع اللي فات وسواه، الكشف الجاي ميكررهوش
-function handlePrintLedger() {
-    if (!selectedProject) { showToast('اختر المشروع أولاً لطباعة كشف حسابه', 'warning'); return; }
-
-    const unsettled = lastMovements.filter(m => !m.printed);
-    if (!unsettled.length) {
-        showToast('لا توجد حركات جديدة — كل الحركات اتطبعت وتم تسويتها من قبل', 'info');
-        return;
-    }
-
-    const rows = unsettled.map(m => {
-        const isDeposit = m.type === 'إيداع عهدة';
-        const amt = Number(m.amount) || 0;
-        return [
-            formatDate(m.date),
-            isDeposit ? 'إيداع' : 'صرف',
-            m.item || '-',
-            m.description || '-',
-            (m.isTax === 'نعم' || m.isTax === true) ? 'نعم' : '—',
-            (isDeposit ? '+ ' : '− ') + formatCurrency(amt)
-        ];
-    });
-    const periodTotal = unsettled.reduce((s, m) => s + (m.type === 'إيداع عهدة' ? 1 : -1) * (Number(m.amount) || 0), 0);
-
-    printReport({
-        title: 'كشف حساب عهدة مشروع (الحركات الجديدة)',
-        subtitle: selectedProject,
-        metaLines: [
-            `المشرف: ${isAdmin ? 'كل المشرفين' : currentUsername}`,
-            `تاريخ الطباعة: ${new Date().toLocaleDateString('ar-EG', { year: 'numeric', month: 'long', day: 'numeric' })}`,
-            `عدد الحركات الجديدة: ${unsettled.length}`,
-            `إجمالي هذه الحركات: ${formatCurrency(periodTotal)}`,
-            `المتبقي الإجمالي للمشروع: ${formatCurrency(lastSummary.remaining || 0)}`
-        ],
-        columns: ['التاريخ', 'النوع', 'البند', 'الوصف', 'ضريبية', 'القيمة'],
-        rows,
-        totalsRow: ['', '', '', '', 'إجمالي هذا الكشف', formatCurrency(periodTotal)],
-        emptyText: 'لا توجد حركات جديدة'
-    });
-
-    askMarkCustodyPrinted(unsettled.map(m => m.id));
-}
-
 // بعد الطباعة، نسأل المشرف/الأدمن يأكد إن الكشف ده اتسلّم للمحاسب — لو أكد
-// بنعلّم الحركات دي "مطبوعة" عشان متتكررش في الكشف الجاي
+// بنعلّم الحركات دي "مطبوعة" برقم كشف جديد عشان متتكررش في الكشف الجاي،
+// وتقدر بعدين ترجع تطبع نفس الكشف ده تاني من "كشوف سابقة"
 async function askMarkCustodyPrinted(ids) {
     const ok = await showConfirm(
         'تم تسليم هذا الكشف للمحاسب وتسويته؟\nلو أكدت، الحركات دي مش هتظهر تاني في كشف الطباعة الجاي.',
@@ -460,10 +622,14 @@ async function askMarkCustodyPrinted(ids) {
     );
     if (!ok) return;
     try {
-        await markCustodyPrinted(selectedProject, ids);
-        lastMovements.forEach(m => { if (ids.includes(m.id)) m.printed = true; });
-        renderMovements(lastMovements);
-        showToast('تم تعليم الحركات كمطبوعة/متسواة', 'success');
+        const r = await markCustodyPrinted(selectedProject, ids);
+        const statementId = r && r.statementId ? String(r.statementId) : null;
+        lastMovements.forEach(m => {
+            if (ids.includes(m.id)) { m.printed = true; if (statementId) m.statementId = statementId; }
+        });
+        applyCustodyFilters();
+        populateStatementSelect();
+        showToast(statementId ? `تم تعليم الحركات ضمن كشف رقم ${statementId}` : 'تم تعليم الحركات كمطبوعة/متسواة', 'success');
     } catch (err) {
         showToast('تعذر تعليم الحركات: ' + err.message, 'error');
     }

@@ -206,12 +206,56 @@
                 </div>
             </div>
 
-            <!-- ═══ سجل الحركات (الموافق عليها) ═══ -->
+            <!-- ═══ سجل الحركات (الموافق عليها) — فلترة + طباعة (فردية/مجموعة/الظاهر) ═══ -->
             <div class="section-card p-4 overflow-x-auto">
-                <h2 class="font-bold text-indigo-900 mb-3">📋 سجل حركات العهدة (الموافق عليها)</h2>
+                <div class="flex flex-wrap justify-between items-center gap-2 mb-3">
+                    <h2 class="font-bold text-indigo-900">📋 سجل حركات العهدة (الموافق عليها)</h2>
+                    <div class="flex gap-2 no-print">
+                        <button type="button" id="printShownMovementsBtn" class="print-btn py-2 px-3 text-xs font-bold">🖨️ طباعة الظاهر</button>
+                        <button type="button" id="printSelectedMovementsBtn" class="print-btn py-2 px-3 text-xs font-bold" disabled>🖨️ طباعة المحدد (<span id="movSelectedCount">0</span>)</button>
+                    </div>
+                </div>
+
+                <!-- فلترة السجل بالتاريخ والنوع -->
+                <div class="grid grid-cols-1 sm:grid-cols-3 gap-3 mb-4 no-print">
+                    <div>
+                        <label class="block text-xs font-semibold text-gray-600 mb-1">من تاريخ</label>
+                        <input type="date" id="filterCustFrom" class="input-field px-3 py-2 w-full">
+                    </div>
+                    <div>
+                        <label class="block text-xs font-semibold text-gray-600 mb-1">إلى تاريخ</label>
+                        <input type="date" id="filterCustTo" class="input-field px-3 py-2 w-full">
+                    </div>
+                    <div>
+                        <label class="block text-xs font-semibold text-gray-600 mb-1">النوع</label>
+                        <select id="filterCustType" class="input-field px-3 py-2 w-full">
+                            <option value="">الكل</option>
+                            <option value="deposit">إيداعات فقط</option>
+                            <option value="expense">صرف فقط</option>
+                        </select>
+                    </div>
+                </div>
+
+                <!-- كشوف سابقة (تسويات اتطبعت وتم تأكيدها قبل كده) -->
+                <div class="flex flex-wrap items-end gap-2 mb-4 no-print p-3 rounded-xl" style="background:rgba(30,60,114,0.05); border:1px dashed rgba(30,60,114,0.2);">
+                    <div class="flex-1 min-w-[200px]">
+                        <label class="block text-xs font-semibold text-gray-600 mb-1">📂 كشوف سابقة (متسواة) — لإعادة الطباعة في أي وقت</label>
+                        <select id="custStatementSelect" class="input-field px-3 py-2 w-full">
+                            <option value="">— اختر كشف سابق —</option>
+                        </select>
+                    </div>
+                    <button type="button" id="printStatementBtn" class="print-btn py-2 px-4 text-sm font-bold" disabled>🖨️ إعادة طباعة الكشف</button>
+                </div>
+
+                <div class="flex items-center justify-between mb-3 no-print">
+                    <label class="flex items-center gap-2 text-xs text-gray-600 cursor-pointer"><input type="checkbox" id="custSelectAllVisible"> تحديد الكل الظاهر</label>
+                    <span id="custShownCount" class="text-xs text-gray-400"></span>
+                </div>
+
                 <table class="report-table">
                     <thead>
                         <tr>
+                            <th class="no-print"></th>
                             <th>التاريخ</th>
                             <th>النوع</th>
                             <th>البند</th>
@@ -219,6 +263,7 @@
                             <th>ضريبية</th>
                             <th>القيمة</th>
                             <th>الحالة</th>
+                            <th class="no-print"></th>
                         </tr>
                     </thead>
                     <tbody id="custMovementsList"></tbody>
