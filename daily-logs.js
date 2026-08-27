@@ -52,6 +52,8 @@ logDate.value = todayStr();
 let currentUsername = null;
 let projects = [];
 let isAdmin = false;
+let isEngineer = false;
+let canViewAll = false; // أدمن أو مهندس — يشوف كل اليوميات لكل المشرفين وكل المشاريع
 let assignedProjects = []; // المشاريع المخصصة للمشرف الحالي (فاضية = بيشوف الكل)
 let dailyLogTypes = []; // أنواع اليوميات (id/اسم/سعر/سعر يدوي) — من شيت "أسعار اليوميات"
 let projectPhases = {}; // المراحل الشغالة لكل مشروع — من شيت "بيانات المشاريع" (المرحلة اللي حالتها مش "شغالة" ما بتظهرش)
@@ -60,6 +62,9 @@ let lastLogs = []; // آخر سجل يوميات معتمدة اتحمّل (لل
 let allDailyBatches = []; // كل دفعات اليوميات المبنية من lastLogs (قبل الفلترة)
 let filteredDailyBatches = []; // الدفعات بعد تطبيق الفلترة (اللي هتتعرّض للمستخدم)
 const selectedLogBatches = new Set(); // معرفات الدفعات المحددة للطباعة الجماعية
+const filterDailySupervisor = document.getElementById('filterDailySupervisor');
+const filterDailyType = document.getElementById('filterDailyType');
+const filterDailySupervisorWrap = document.getElementById('filterDailySupervisorWrap');
 
 onAuthStateChanged(auth, async (user) => {
     if (!user) { window.location.href = 'index.html'; return; }
@@ -68,23 +73,27 @@ onAuthStateChanged(auth, async (user) => {
     pendingLogs.innerHTML = skeletonCards(2);
     recentLogs.innerHTML = skeletonCards(2);
 
-    // الثلاث نداءات دي مالهاش علاقة ببعض، فبنطلقهم مع بعض بدل ما ننتظر كل واحد لوحده
-    // (كل نداء لـ Apps Script بياخد وقت، فتشغيلهم متوازي بيقلل وقت التحميل بشكل كبير)
-    const [roleInfo, setupData, logsData, pendingData] = await Promise.all([
-        getUserRole(user.email).catch(err => { console.error(err); return null; }),
-        getSetupData().catch(err => { console.error(err); showToast('فشل تحميل البيانات: ' + err.message, 'error'); return null; }),
-        getDailyLogs(currentUsername).catch(err => { console.error(err); return []; }),
-        getMyDailyLogRequests(user.email).catch(err => { console.error(err); return []; })
-    ]);
-
+    // نجيب الدور الأول عشان نعرف نطلب سجل كل المشرفين (أدمن/مهندس) ولا سجل المستخدم بس
+    const roleInfo = await getUserRole(user.email).catch(err => { console.error(err); return null; });
     let roleLoadFailed = false;
     if (roleInfo) {
         isAdmin = roleInfo.role === 'admin';
+        isEngineer = roleInfo.role === 'engineer';
+        canViewAll = isAdmin || isEngineer;
         assignedProjects = roleInfo.projects || [];
-        if (roleInfo.role === 'admin' || roleInfo.role === 'engineer') bottomNavApprovals?.classList.remove('hidden');
+        if (canViewAll) bottomNavApprovals?.classList.remove('hidden');
     } else {
         roleLoadFailed = true;
     }
+
+    // الثلاث نداءات دي مالهاش علاقة ببعض، فبنطلقهم مع بعض بدل ما ننتظر كل واحد لوحده
+    // (كل نداء لـ Apps Script بياخد وقت، فتشغيلهم متوازي بيقلل وقت التحميل بشكل كبير)
+    // المهندس/الأدمن بيشوفوا يوميات كل المشرفين (email=null)، والمشرف بيشوف بتاعته بس
+    const [setupData, logsData, pendingData] = await Promise.all([
+        getSetupData().catch(err => { console.error(err); showToast('فشل تحميل البيانات: ' + err.message, 'error'); return null; }),
+        getDailyLogs(canViewAll ? null : currentUsername).catch(err => { console.error(err); return []; }),
+        getMyDailyLogRequests(user.email).catch(err => { console.error(err); return []; })
+    ]);
 
     if (setupData) applySetupData(setupData, roleLoadFailed);
     lastLogs = logsData || [];
@@ -102,6 +111,8 @@ onAuthStateChanged(auth, async (user) => {
     filterDailyFrom?.addEventListener('input', applyDailyFilters);
     filterDailyTo?.addEventListener('input', applyDailyFilters);
     filterDailyProject?.addEventListener('change', applyDailyFilters);
+    filterDailySupervisor?.addEventListener('change', applyDailyFilters);
+    filterDailyType?.addEventListener('change', applyDailyFilters);
     dailySelectAllVisible?.addEventListener('change', handleSelectAllVisible);
     printShownBtn?.addEventListener('click', handlePrintShown);
     printSelectedBtn?.addEventListener('click', handlePrintSelected);
@@ -116,11 +127,11 @@ function applySetupData(data, roleLoadFailed) {
     dailyLogTypes = data.dailyLogTypes || [];
     projectPhases = data.projectPhases || {};
 
-    // الأدمن يشوف كل المشاريع. المشرف يشوف بس المشاريع المكتوبة له في عمود "المشاريع المخصصة"
-    // في شيت Users — لو العمود فاضي، معناه ملوش مشاريع لسه (مش إنه يشوف الكل)
-    const visibleProjects = isAdmin ? projects : projects.filter(p => assignedProjects.includes(p));
+    // الأدمن والمهندس يشوفوا كل المشاريع. المشرف يشوف بس المشاريع المكتوبة له في عمود
+    // "المشاريع المخصصة" في شيت Users — لو العمود فاضي، معناه ملوش مشاريع لسه (مش إنه يشوف الكل)
+    const visibleProjects = canViewAll ? projects : projects.filter(p => assignedProjects.includes(p));
 
-    if (!isAdmin && visibleProjects.length === 0) {
+    if (!canViewAll && visibleProjects.length === 0) {
         noProjectsWarning.textContent = roleLoadFailed
             ? '⚠️ تعذر تحميل صلاحياتك، حدّث الصفحة أو تواصل مع الأدمن.'
             : '⚠️ لا يوجد أي مشاريع مخصصة لك حاليًا. تواصل مع الأدمن لتفعيل مشروع لك.';
@@ -138,6 +149,17 @@ function applySetupData(data, roleLoadFailed) {
     if (filterDailyProject) {
         filterDailyProject.innerHTML = '<option value="">الكل</option>' +
             visibleProjects.map(p => `<option value="${p}">${p}</option>`).join('');
+    }
+
+    // فلتر نوع اليومية: من أنواع اليوميات المعرّفة في الشيت
+    if (filterDailyType) {
+        filterDailyType.innerHTML = '<option value="">الكل</option>' +
+            dailyLogTypes.map(t => `<option value="${t.name}">${t.name}</option>`).join('');
+    }
+
+    // فلتر المشرف يظهر بس للأدمن/المهندس (اللي بيشوفوا كل المشرفين مع بعض)
+    if (filterDailySupervisorWrap) {
+        filterDailySupervisorWrap.classList.toggle('hidden', !canViewAll);
     }
 
     // المرحلة بتتحدد لما تختار المشروع (كل مشروع له مراحله الشغالة بس من شيت "بيانات المشاريع")
@@ -434,7 +456,7 @@ function buildDailyBatches(logs) {
     const idx = {};
     (logs || []).forEach(l => {
         const key = l.batchId || l.id;
-        if (!idx[key]) { idx[key] = { batchId: key, date: l.date, project: l.project, items: [] }; batches.push(idx[key]); }
+        if (!idx[key]) { idx[key] = { batchId: key, date: l.date, project: l.project, supervisor: l.supervisor, items: [] }; batches.push(idx[key]); }
         idx[key].items.push(l);
     });
     // ترتيب تنازلي حسب التاريخ
@@ -446,15 +468,36 @@ function applyDailyFilters() {
     const from = filterDailyFrom?.value;
     const to = filterDailyTo?.value;
     const project = filterDailyProject?.value || '';
+    const supervisor = filterDailySupervisor?.value || '';
+    const type = filterDailyType?.value || '';
+
+    // فلتر المشرف بيظهر بس لما نبني قائمته أول مرة (من المشرفين الموجودين فعلاً في السجل)
+    populateSupervisorFilterOptions();
 
     filteredDailyBatches = allDailyBatches.filter(b => {
         if (project && b.project !== project) return false;
+        if (supervisor && b.supervisor !== supervisor) return false;
+        if (type && !b.items.some(i => i.typeName === type)) return false;
         if (from && new Date(b.date || 0) < new Date(from)) return false;
         if (to && new Date(b.date || 0) > new Date(to)) return false;
         return true;
     });
 
     renderFilteredBatches();
+}
+
+// بيبني قائمة المشرفين لفلتر daily-logs من المشرفين الموجودين فعلاً في السجل المحمّل
+// (بيتنادى مرة واحدة فعليًا لأن الخيارات بتتحدث بس أول مرة السجل يتحمّل)
+let supervisorFilterPopulated = false;
+function populateSupervisorFilterOptions() {
+    if (!filterDailySupervisor || supervisorFilterPopulated) return;
+    const supervisors = [...new Set(allDailyBatches.map(b => b.supervisor).filter(Boolean))].sort();
+    if (!supervisors.length) return;
+    const current = filterDailySupervisor.value;
+    filterDailySupervisor.innerHTML = '<option value="">كل المشرفين</option>' +
+        supervisors.map(s => `<option value="${s}">${s}</option>`).join('');
+    filterDailySupervisor.value = current;
+    supervisorFilterPopulated = true;
 }
 
 function renderFilteredBatches() {
@@ -481,7 +524,7 @@ function renderFilteredBatches() {
                 <input type="checkbox" class="log-batch-select mt-1" data-batch="${b.batchId}">
                 <div class="flex-1">
                     <div class="flex flex-wrap justify-between items-center mb-2">
-                        <span class="text-sm font-bold text-indigo-900">${formatDate(b.date)} — ${b.project}</span>
+                        <span class="text-sm font-bold text-indigo-900">${formatDate(b.date)} — ${b.project}${canViewAll ? ` — <span class="text-indigo-500">${b.supervisor}</span>` : ''}</span>
                         <div class="flex items-center gap-2">
                             ${statusBadge}
                             <button type="button" onclick="printDailyBatch('${b.batchId}')" class="print-btn py-1 px-2 text-xs font-bold no-print">🖨️</button>
@@ -550,7 +593,7 @@ function printDailyBatches(batches) {
 
     printReport({
         title: 'سجل اليوميات المعتمدة',
-        subtitle: isAdmin ? '' : currentUsername,
+        subtitle: canViewAll ? '' : currentUsername,
         metaLines: [
             `المشرف: ${currentUsername}`,
             `عدد الدفعات: ${batches.length}`,
@@ -637,7 +680,7 @@ function handlePrintLogs() {
 
     printReport({
         title: 'سجل اليوميات المعتمدة (الجديدة)',
-        subtitle: isAdmin ? '' : currentUsername,
+        subtitle: canViewAll ? '' : currentUsername,
         metaLines: [
             `المشرف: ${currentUsername}`,
             `عدد اليوميات الجديدة: ${batches.length}`,
@@ -718,7 +761,7 @@ function handlePrintDailyStatement() {
 
     printReport({
         title: `سجل اليوميات المعتمدة (كشف رقم ${statementId})`,
-        subtitle: isAdmin ? '' : currentUsername,
+        subtitle: canViewAll ? '' : currentUsername,
         metaLines: [
             `المشرف: ${currentUsername}`,
             `تاريخ إعادة الطباعة: ${new Date().toLocaleDateString('ar-EG', { year: 'numeric', month: 'long', day: 'numeric' })}`,

@@ -42,6 +42,9 @@ const custShownCountEl = document.getElementById('custShownCount');
 const custSelectAllVisible = document.getElementById('custSelectAllVisible');
 const custStatementSelect = document.getElementById('custStatementSelect');
 const printStatementBtn = document.getElementById('printStatementBtn');
+const filterCustSupervisor = document.getElementById('filterCustSupervisor');
+const filterCustSupervisorWrap = document.getElementById('filterCustSupervisorWrap');
+let supervisorFilterPopulated = false;
 
 refreshBtn?.addEventListener('click', refreshData);
 invDate.value = todayStr();
@@ -49,6 +52,8 @@ invDate.value = todayStr();
 let currentEmail = null;
 let currentUsername = null;
 let isAdmin = false;
+let isEngineer = false;
+let canViewAll = false; // أدمن أو مهندس — يشوف كل المشاريع وكل حركات كل المشرفين
 let assignedProjects = [];
 let projects = [];
 let projectPhases = {};
@@ -70,8 +75,10 @@ onAuthStateChanged(auth, async (user) => {
     try {
         const info = await getUserRole(user.email);
         isAdmin = info.role === 'admin';
+        isEngineer = info.role === 'engineer';
+        canViewAll = isAdmin || isEngineer;
         assignedProjects = info.projects || [];
-        if (info.role === 'admin' || info.role === 'engineer') bottomNavApprovals?.classList.remove('hidden');
+        if (canViewAll) bottomNavApprovals?.classList.remove('hidden');
     } catch (err) {
         console.error(err);
     }
@@ -79,10 +86,10 @@ onAuthStateChanged(auth, async (user) => {
     const setup = await loadSetup();
     if (!setup) return;
 
-    // المشاريع اللي يشوفها المستخدم
-    const visibleProjects = isAdmin ? projects : projects.filter(p => assignedProjects.includes(p));
+    // المشاريع اللي يشوفها المستخدم — الأدمن والمهندس يشوفوا كل المشاريع
+    const visibleProjects = canViewAll ? projects : projects.filter(p => assignedProjects.includes(p));
 
-    if (!isAdmin && visibleProjects.length === 0) {
+    if (!canViewAll && visibleProjects.length === 0) {
         noProjectsWarning.classList.remove('hidden');
         return;
     }
@@ -108,6 +115,7 @@ onAuthStateChanged(auth, async (user) => {
     filterCustFrom?.addEventListener('input', applyCustodyFilters);
     filterCustTo?.addEventListener('input', applyCustodyFilters);
     filterCustType?.addEventListener('change', applyCustodyFilters);
+    filterCustSupervisor?.addEventListener('change', applyCustodyFilters);
     custSelectAllVisible?.addEventListener('change', handleSelectAllVisibleMovements);
     printShownMovementsBtn?.addEventListener('click', handlePrintShownMovements);
     printSelectedMovementsBtn?.addEventListener('click', handlePrintSelectedMovements);
@@ -150,6 +158,8 @@ async function refreshData() {
         try {
             const info = await getUserRole(currentEmail);
             isAdmin = info.role === 'admin';
+            isEngineer = info.role === 'engineer';
+            canViewAll = isAdmin || isEngineer;
             assignedProjects = info.projects || [];
         } catch (err) { console.error(err); }
 
@@ -157,9 +167,9 @@ async function refreshData() {
         const setup = await loadSetup(true);
         if (!setup) return;
 
-        const visibleProjects = isAdmin ? projects : projects.filter(p => assignedProjects.includes(p));
+        const visibleProjects = canViewAll ? projects : projects.filter(p => assignedProjects.includes(p));
 
-        if (!isAdmin && visibleProjects.length === 0) {
+        if (!canViewAll && visibleProjects.length === 0) {
             noProjectsWarning.classList.remove('hidden');
             custodyContent.classList.add('hidden');
             return;
@@ -216,8 +226,8 @@ async function handleProjectChange() {
 
 async function loadProjectCustody() {
     try {
-        // المشرف يشوف حركاته بس، الأدمن يشوف كل حركات المشروع
-        const supervisor = isAdmin ? '' : currentUsername;
+        // المشرف يشوف حركاته بس، الأدمن/المهندس يشوفوا كل حركات المشروع
+        const supervisor = canViewAll ? '' : currentUsername;
         const data = await getProjectCustody(selectedProject, supervisor || null);
         lastSummary = data.summary || {};
         lastMovements = data.movements || [];
@@ -244,16 +254,21 @@ function renderSummary(s) {
     document.getElementById('custNegativeAlert').classList.toggle('hidden', remaining >= 0);
 }
 
-// ── فلترة سجل الحركات بالتاريخ والنوع ──────────────────
+// ── فلترة سجل الحركات بالتاريخ والنوع والمشرف ──────────
 function applyCustodyFilters() {
     const from = filterCustFrom?.value;
     const to = filterCustTo?.value;
     const type = filterCustType?.value || '';
+    const supervisor = filterCustSupervisor?.value || '';
+
+    if (filterCustSupervisorWrap) filterCustSupervisorWrap.classList.toggle('hidden', !canViewAll);
+    populateCustSupervisorOptions();
 
     filteredMovements = lastMovements.filter(m => {
         const isDeposit = m.type === 'إيداع عهدة';
         if (type === 'deposit' && !isDeposit) return false;
         if (type === 'expense' && isDeposit) return false;
+        if (supervisor && m.supervisor !== supervisor) return false;
         if (from && new Date(m.date || 0) < new Date(from)) return false;
         if (to && new Date(m.date || 0) > new Date(to)) return false;
         return true;
@@ -261,6 +276,16 @@ function applyCustodyFilters() {
 
     selectedMovementIdx.clear();
     renderMovements(filteredMovements);
+}
+
+// يبني قائمة المشرفين لفلتر العهد من المشرفين الموجودين فعلاً في حركات المشروع ده
+function populateCustSupervisorOptions() {
+    if (!filterCustSupervisor || !canViewAll || supervisorFilterPopulated) return;
+    const supervisors = [...new Set(lastMovements.map(m => m.supervisor).filter(Boolean))].sort();
+    if (!supervisors.length) return;
+    filterCustSupervisor.innerHTML = '<option value="">كل المشرفين</option>' +
+        supervisors.map(s => `<option value="${s}">${s}</option>`).join('');
+    supervisorFilterPopulated = true;
 }
 
 function renderMovements(movements) {
@@ -280,16 +305,26 @@ function renderMovements(movements) {
     movements.forEach((m, idx) => {
         const isDeposit = m.type === 'إيداع عهدة';
         const amt = Number(m.amount) || 0;
+        const isTaxInvoice = (m.isTax === 'نعم' || m.isTax === true);
+        const statusBadge = m.printed
+            ? `<span class="type-badge badge-deposit">كشف ${m.statementId || ''}</span>`
+            : '<span class="type-badge badge-pending">جديدة</span>';
         const row = document.createElement('tr');
         row.innerHTML = `
             <td class="no-print"><input type="checkbox" class="movement-select" data-idx="${idx}"></td>
-            <td class="whitespace-nowrap">${formatDate(m.date)}</td>
-            <td><span class="type-badge ${isDeposit ? 'badge-deposit' : 'badge-expense'}">${isDeposit ? 'إيداع' : 'صرف'}</span></td>
-            <td>${m.item || '-'}</td>
-            <td>${m.description || '-'}</td>
-            <td>${(m.isTax === 'نعم' || m.isTax === true) ? '✅' : '—'}</td>
-            <td class="font-bold whitespace-nowrap" style="color:${isDeposit ? '#059669' : '#dc2626'}">${isDeposit ? '+' : '−'} ${formatCurrency(amt)}</td>
-            <td>${m.printed ? `<span class="type-badge badge-deposit">كشف ${m.statementId || ''}</span>` : '<span class="type-badge badge-pending">جديدة</span>'}</td>
+            <td class="whitespace-nowrap">
+                ${formatDate(m.date)}
+                ${canViewAll ? `<div class="text-xs text-indigo-500">${m.supervisor || ''}</div>` : ''}
+            </td>
+            <td>
+                <span class="type-badge ${isDeposit ? 'badge-deposit' : 'badge-expense'}">${isDeposit ? 'إيداع' : 'صرف'}</span>
+                ${m.item ? `<div class="text-xs text-gray-500 mt-1">${m.item}</div>` : ''}
+            </td>
+            <td>${m.description || '-'}${isTaxInvoice ? ' <span class="text-xs text-amber-600">(ضريبية)</span>' : ''}</td>
+            <td class="whitespace-nowrap">
+                <span class="font-bold" style="color:${isDeposit ? '#059669' : '#dc2626'}">${isDeposit ? '+' : '−'} ${formatCurrency(amt)}</span>
+                <div class="mt-1">${statusBadge}</div>
+            </td>
             <td class="no-print"><button type="button" data-print-idx="${idx}" class="print-btn py-1 px-2 text-xs font-bold">🖨️</button></td>
         `;
         tbody.appendChild(row);
@@ -364,7 +399,7 @@ function printMovementsList(movements) {
         title: 'كشف حساب عهدة مشروع',
         subtitle: selectedProject,
         metaLines: [
-            `المشرف: ${isAdmin ? 'كل المشرفين' : currentUsername}`,
+            `المشرف: ${canViewAll ? 'كل المشرفين' : currentUsername}`,
             `تاريخ الطباعة: ${new Date().toLocaleDateString('ar-EG', { year: 'numeric', month: 'long', day: 'numeric' })}`,
             `عدد الحركات: ${movements.length}`,
             `إجمالي هذا الكشف: ${formatCurrency(total)}`
@@ -429,7 +464,7 @@ function handlePrintStatement() {
         title: `كشف حساب عهدة مشروع (كشف رقم ${statementId})`,
         subtitle: selectedProject,
         metaLines: [
-            `المشرف: ${isAdmin ? 'كل المشرفين' : currentUsername}`,
+            `المشرف: ${canViewAll ? 'كل المشرفين' : currentUsername}`,
             `تاريخ إعادة الطباعة: ${new Date().toLocaleDateString('ar-EG', { year: 'numeric', month: 'long', day: 'numeric' })}`,
             `عدد الحركات: ${movements.length}`,
             `إجمالي هذا الكشف: ${formatCurrency(total)}`
